@@ -1,1 +1,2900 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Red Light / Green Light — Prototype v47</title>
+    <style>
+    :root{
+      /* Page + frame */
+      --page-bg:#060912;
+      --frame-border:rgba(255,255,255,.12);
+      --frame-shadow: rgba(0,0,0,.55);
 
+      /* HUD */
+      --panel:rgba(255,255,255,.86);
+      --panel-2:rgba(255,255,255,.72);
+      --line:rgba(0,0,0,.10);
+      --text:#0b1220;
+      --muted:#334155;
+
+      /* Accents */
+      --ok:#34c6bd;      /* teal like the reference bar */
+      --danger:#ef4444;  /* red */
+      --cyan:#00e5ff;    /* player */
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      background:
+        radial-gradient(1200px 650px at 20% 0%, rgba(75,92,125,.35), rgba(0,0,0,0) 60%),
+        radial-gradient(900px 600px at 85% 25%, rgba(120,160,255,.14), rgba(0,0,0,0) 62%),
+        linear-gradient(180deg, #050714, #050714);
+      color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
+      overflow:hidden;
+    }
+    .root{height:100%; display:grid; place-items:center; padding:10px;}
+    .frame{
+      position:relative;
+      display:inline-block;
+      border-radius:22px;
+      border:1px solid var(--frame-border);
+      box-shadow: 0 18px 60px var(--frame-shadow);
+      overflow:hidden;
+      background: rgba(10, 14, 24, .80);
+    }
+        canvas{display:block; background:transparent;}
+    #c{position:relative; z-index:1;}
+    .fx{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      pointer-events:none;
+      z-index:2;
+      mix-blend-mode:screen;
+      opacity:.07;
+      filter: blur(.25px);
+    }
+    .fx-r{transform: translate(1.2px, 0);}
+    .fx-c{transform: translate(-1.2px, 0);}
+    .hud{z-index:6;}
+    .frame::after{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:9;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255,255,255,0.040) 0px,
+        rgba(255,255,255,0.040) 1px,
+        rgba(0,0,0,0.0) 3px,
+        rgba(0,0,0,0.0) 4px
+      );
+      opacity:0.18;
+      mix-blend-mode: soft-light;
+      animation: scanlines 6s linear infinite;
+    }
+    @keyframes scanlines{
+      from{background-position:0 0;}
+      to{background-position:0 10px;}
+    }
+
+    .hud{
+      position:absolute; left:14px; right:14px; top:14px;
+      display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; justify-content:space-between;
+      pointer-events:none;
+      filter: drop-shadow(0 10px 18px rgba(0,0,0,.22));
+    }
+    .hudRight{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      align-items:flex-end;
+    }
+
+    .pill{
+      background:var(--panel);
+      border:1px solid var(--line);
+      padding:10px 12px;
+      border-radius:999px;
+      font-size:13px;
+      line-height:1;
+      color:var(--muted);
+      display:flex; gap:10px; align-items:center;
+      backdrop-filter: blur(10px);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.45),
+        0 8px 18px rgba(0,0,0,.12);
+      letter-spacing:.2px;
+    }
+    .pill.active{
+      border-color: rgba(52,198,189,.65);
+      background: linear-gradient(180deg, rgba(52,198,189,.18), rgba(52,198,189,.08));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.40),
+        0 10px 22px rgba(0,0,0,.16),
+        0 0 0 1px rgba(52,198,189,.10),
+        0 0 26px rgba(52,198,189,.18);
+    }
+
+    /* Sprint pill: dark active state (Shift) */
+    .pill.sprint{
+      justify-content:center;
+      min-width: 170px;
+    }
+    .pill.sprint.active{
+      border-color: rgba(255,255,255,.14);
+      background: rgba(8,10,16,.92);
+      color: rgba(255,255,255,.92);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.08),
+        0 10px 22px rgba(0,0,0,.22);
+    }
+    .pill.sprint.active b{ color:#fff; }
+
+    .pill b{color:var(--text);}
+    .bar{
+      width:200px; height:9px; border-radius:999px; overflow:hidden;
+      background:rgba(2,6,23,.10);
+      border:1px solid rgba(2,6,23,.12);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.10);
+    }
+    .bar > i{display:block; height:100%; width:0%; background:var(--ok);}
+
+/* Non-pausing overlay (game continues underneath) */
+.modal{
+  position:absolute; inset:0;
+  z-index:20;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding:14px;
+  pointer-events:none;
+  background: rgba(0,0,0,0.18);
+}
+.modal.hidden{ display:none; }
+.modalCard{
+  margin-top: 102px; /* below HUD */
+  width:min(560px, 94vw);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10, 14, 24, 0.72);
+  box-shadow: 0 18px 55px rgba(0,0,0,.44);
+  padding: 12px 14px 10px;
+  color: rgba(255,255,255,0.92);
+  pointer-events:auto;
+  backdrop-filter: blur(6px);
+}
+.modalTitle{
+  font-weight: 950;
+  letter-spacing: .35px;
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+.modalBody{
+  color: rgba(255,255,255,0.74);
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 10px;
+  white-space: pre-line;
+}
+.modalBtns{
+  display:flex;
+  gap:10px;
+  justify-content:flex-start;
+  flex-wrap:wrap;
+}
+.btn{
+  pointer-events:auto;
+  cursor:pointer;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 850;
+  letter-spacing: .15px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.92);
+  color: rgba(8,10,16,.94);
+  box-shadow: 0 10px 22px rgba(0,0,0,.22);
+  font-size: 13px;
+}
+.btn:hover{ transform: translateY(-1px); }
+.btn:active{ transform: translateY(0px); }
+.btn.ghost{
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.92);
+  border-color: rgba(255,255,255,0.16);
+  box-shadow: none;
+}
+.modalHint{
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  text-align:left;
+}
+  </style>
+</head>
+<body>
+  <div class="root">
+    <div class="frame" id="frame">
+            <canvas id="c" width="1500" height="900"></canvas>
+      <canvas id="fxR" class="fx fx-r" width="1500" height="900"></canvas>
+      <canvas id="fxC" class="fx fx-c" width="1500" height="900"></canvas>
+
+      <div class="hud">
+        <div class="pill">Nivel: <b id="lvl">1</b></div>
+        <div class="pill">Fase: <b id="phase">—</b></div>
+        <div class="pill">Tiempo
+          <span class="bar"><i id="timeBar"></i></span>
+          <b id="timeTxt">—</b>
+        </div>
+      <div class="hudRight">
+        <div class="pill">Salvados: <b id="saved">0</b> · Restantes: <b id="alive">0</b></div>
+        <div class="pill sprint" id="sprintPill">Sprint: Tecla Shift</div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+
+<script>
+(() => {
+  'use strict';
+
+  const frameEl = document.getElementById('frame');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  // Soft chromatic aberration layers (very subtle)
+  const fxR = document.getElementById('fxR');
+  const fxC = document.getElementById('fxC');
+  const fxRctx = fxR.getContext('2d');
+  const fxCctx = fxC.getContext('2d');
+  fxR.width = canvas.width; fxR.height = canvas.height;
+  fxC.width = canvas.width; fxC.height = canvas.height;
+
+  function updateChromatic(){
+    // Copy the final frame and tint it; tiny offset is done in CSS transforms.
+    fxRctx.clearRect(0,0,fxR.width,fxR.height);
+    fxCctx.clearRect(0,0,fxC.width,fxC.height);
+
+    fxRctx.drawImage(canvas,0,0);
+    fxRctx.globalCompositeOperation = 'source-in';
+    fxRctx.fillStyle = 'rgba(255, 40, 120, 1)';
+    fxRctx.fillRect(0,0,fxR.width,fxR.height);
+    fxRctx.globalCompositeOperation = 'source-over';
+
+    fxCctx.drawImage(canvas,0,0);
+    fxCctx.globalCompositeOperation = 'source-in';
+    fxCctx.fillStyle = 'rgba(0, 229, 255, 1)';
+    fxCctx.fillRect(0,0,fxC.width,fxC.height);
+    fxCctx.globalCompositeOperation = 'source-over';
+  }
+
+  const uiPhase = document.getElementById('phase');
+  const uiTimeBar = document.getElementById('timeBar');
+  const uiTimeTxt = document.getElementById('timeTxt');
+  const uiSaved = document.getElementById('saved');
+  const uiAlive = document.getElementById('alive');
+  const uiLevel = document.getElementById('lvl');
+  const uiSprint = document.getElementById('sprintPill');
+
+  // Overlay state (non-pausing): 'none' | 'meta' | 'death' | 'victory'
+  let overlayMode = 'none';
+  let deathOverlayShown = false;
+  let metaOverlayShown = false;
+  let victoryOverlayShown = false;
+
+  const BASE_W = canvas.width;
+  const BASE_H = canvas.height;
+
+  function fitToViewport(){
+    const pad = 12;
+    const availW = Math.max(320, window.innerWidth - pad);
+    const availH = Math.max(240, window.innerHeight - pad);
+    const scale = Math.min(availW / BASE_W, availH / BASE_H);
+    const w = Math.floor(BASE_W * scale);
+    const h = Math.floor(BASE_H * scale);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    frameEl.style.width = w + 'px';
+    frameEl.style.height = h + 'px';
+  }
+  window.addEventListener('resize', fitToViewport);
+
+  // ===== World =====
+  const W = 88, H = 54;
+  const tile = canvas.width / W;
+
+  const FINISH_Y = 3.0;
+  const START_ZONE_H = 4.5;
+  const START_ZONE_Y = H - START_ZONE_H;
+
+  // Initial total players requested: 749 (including the human player)
+  const INITIAL_NPC_COUNT = 748;
+  const SOLDIER_COUNT = 2;
+
+  const OBSTACLE_TILES = 160;
+  const EXTRA_START_OBS = 60;
+  const EXTRA_LOWER_OBS = 60; // additional singles in lower half (near salida)
+
+  const FIXED_DT = 1/90;
+
+  // Collision radii (world units)
+  const PLAYER_R = 0.19;
+  const NPC_BASE_R = 0.082;
+  // "Gordito" max: about 2x the player's footprint (radius)
+  const NPC_MAX_R = PLAYER_R * 2.0;
+  const NPC_MAX_SIZE_MUL = NPC_MAX_R / NPC_BASE_R;
+
+  function entRadius(e){
+    return (e.kind === 'player') ? PLAYER_R : (NPC_BASE_R * (e.sizeMul ?? 1));
+  }
+
+  // Player (WALK by default, SPRINT with Shift)
+  const WALK_MAX_SPEED = 3.15;
+  const WALK_ACCEL = 26.0;
+  const WALK_FRICTION = 52.0;      // high friction => stops quickly
+  const WALK_MOMENTUM_BUILD = 0.20;
+  const WALK_MOMENTUM_DECAY = 2.40;
+  const WALK_MOMENTUM_MAX = 0.55;
+
+  // Sprint behaves like the previous movement: faster + lots of inertia
+  const SPRINT_MAX_SPEED = 5.60;
+  const SPRINT_ACCEL = 30.0;
+  const SPRINT_FRICTION = 10.5;
+  const SPRINT_MOMENTUM_BUILD = 3.0;
+  const SPRINT_MOMENTUM_DECAY = 0.12;
+  const SPRINT_MOMENTUM_MAX = 13.0;
+
+// NPCs (slower overall; speed is per NPC)
+  const NPC_BASE_MAX_SPEED = 9.10;
+  const NPC_BASE_ACCEL = 25.80;
+  const NPC_FRICTION_SING = 22.0;
+  const NPC_FRICTION_LOOK = 110.0;
+
+  // Detection
+  const PLAYER_DETECT_SPEED = 0.35;
+  const NPC_DETECT_SPEED = 0.075;
+  const DETECT_HZ = 30;
+  const DETECT_DT = 1 / DETECT_HZ;
+
+  // SING countdown duration
+  function pickSingTotal(){
+    // Countdown "10" lasts between 2 and 10 seconds (random every time).
+    // Bias: often fast, sometimes long.
+    const r = Math.random();
+    if(r < 0.40) return rnd(2.0, 4.0);   // fast (sometimes ~3s)
+    if(r < 0.85) return rnd(4.0, 7.0);   // medium
+    return rnd(7.0, 10.0);              // long (sometimes ~10s)
+  }
+
+  // LOOK sweeps (a bit faster than before)
+  const LOOK_SWEEP_TIME_RANGE = [1.55, 2.55]; // seconds per edge-to-edge sweep
+  const SCAN_LIMIT = 1.25;
+  const FOV_RANGE = Math.hypot(W, H) * 1.25;
+  const FOV_HALF_ANGLE = Math.PI * 0.23;
+  const FOV_SWEEP_AMPL = Math.PI * 0.30;
+
+  // Puddles (blood pools)
+  const SLIP_TIME = 0.50;                 // NPC slip duration
+  const SLIP_TIME_PLAYER = 0.95;          // player slips longer (feels like falling)
+  const SLIP_FRICTION_MULT = 0.22;        // NPC sliding (lower friction)
+  const SLIP_FRICTION_MULT_PLAYER = 0.045;// player sliding is MUCH slipperier than sprint
+  const SLIP_CONTROL_MULT_PLAYER = 0.18;  // steering/acceleration while slipping (reduced control)
+  const SLIP_ENTER_BOOST = 1.90;          // impulse when stepping onto a puddle
+  const SLIP_MAX_SPEED = 7.80;            // cap the slide speed
+  const PUDDLE_GROW_TIME = 1.35;
+
+  // Shooting anim
+  const SHOT_DUR = 0.10;
+  const SHOT_MAX_ACTIVE_DRAW = 180;
+
+  // Time
+const LEVEL_TIME = 60.0;
+
+function timeForLevel(l){ return LEVEL_TIME; }
+function beamsForLevel(l){ return Math.max(0, l - 1); }
+let levelMaxTime = timeForLevel(1);
+
+  const START_COUNTDOWN = 3.0;
+
+  // ===== Helpers =====
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const rnd = (a,b)=>a+Math.random()*(b-a);
+  const rndi = (a,b)=>a+Math.floor(Math.random()*(b-a+1));
+  const hash = (x,y)=>`${x},${y}`;
+  const lerp = (a,b,t)=>a+(b-a)*t;
+
+  function norm(x,y){
+    const l = Math.hypot(x,y);
+    if(l<1e-6) return {x:0,y:0};
+    return {x:x/l,y:y/l};
+  }
+  function angleDiff(a,b){
+    let d = a - b;
+    while(d > Math.PI) d -= 2*Math.PI;
+    while(d < -Math.PI) d += 2*Math.PI;
+    return d;
+  }
+  function shuffle(arr){
+    for(let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]] = [arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  function inMeta(e){
+    return e.y <= FINISH_Y;
+  }
+
+function clampPlayerInMeta(){
+  if(!player) return;
+  // Keep the player fully inside the finish band once they've reached it,
+  // even if NPC collisions try to shove them around.
+  player.x = clamp(player.x, 0.9, W-0.9);
+  player.y = clamp(player.y, 0.65, FINISH_Y - 0.45);
+  player.vx = 0; player.vy = 0;
+  player.momentum = 0;
+  player.safeX = player.x; player.safeY = player.y;
+}
+
+
+  // ===== Pink sing-line modifier (MULTI BEAMS) =====
+// Thick glowing pink bands appear during SING (warning) and stay through LOOK.
+// During LOOK: if an entity is inside ANY band AND the doll sees them (FOV + LOS) => shot (even if not moving).
+let beamCount = 0; // beams per level
+
+function makeSingLine(){
+  // Random line crossing the arena (world coordinates).
+  const dirAng = rnd(0, Math.PI);
+  const dx = Math.cos(dirAng), dy = Math.sin(dirAng);
+  // Normal vector (unit) for signed distance.
+  const nx = -dy, ny = dx;
+
+  // Place reference point in main arena.
+  const px = rnd(2.0, W - 2.0);
+  const py = rnd(FINISH_Y + 3.0, START_ZONE_Y - 3.0);
+
+  // Width of the lit band (world units). (x4 vs the original thin beam)
+  const halfW = 0.42 * 4;
+
+  // How far NPCs "feel" danger and steer away.
+  const avoidDist = rnd(1.9, 2.7) + halfW * 0.9;
+
+  return {
+    active: true,
+    px, py,
+    nx, ny,
+    halfW,
+    avoidDist,
+    // Movement: sweep along the normal; now half speed (requested).
+    moveDir: (Math.random() < 0.5) ? -1 : 1,
+    moveSpeed: rnd(3.4, 5.6) * 0.5,
+  };
+}
+
+function newSingLine(){
+  // Respawn a set of beams for this SING/LOOK cycle.
+  singLines = [];
+  for(let i=0;i<beamCount;i++){
+    singLines.push(makeSingLine());
+  }
+}
+
+function signedDistToLine(line, x,y){
+  return (x - line.px) * line.nx + (y - line.py) * line.ny;
+}
+
+function singLineHitsEntity(e){
+  if(!singLines.length) return false;
+  for(const line of singLines){
+    if(!line.active) continue;
+    const d = Math.abs(signedDistToLine(line, e.x, e.y));
+    if(d < (line.halfW + entRadius(e))) return true;
+  }
+  return false;
+}
+
+function nearestSingLineInfo(x,y){
+  let best = null;
+  let bestAd = Infinity;
+  let bestSd = 0;
+  for(const line of singLines){
+    if(!line.active) continue;
+    const sd = signedDistToLine(line, x, y);
+    const ad = Math.abs(sd);
+    if(ad < bestAd){
+      bestAd = ad;
+      best = line;
+      bestSd = sd;
+    }
+  }
+  return {line: best, sd: bestSd, ad: bestAd};
+}
+
+function drawSingLine(){
+  if(!singLines.length || !(phase === 'SING' || phase === 'LOOK')) return;
+
+  const thick = 4;
+  const count = Math.max(1, singLines.length);
+  const alphaScale = 1 / Math.sqrt(count); // prevent many beams from nuking the frame
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineCap = 'round';
+
+  for(const line of singLines){
+    if(!line.active) continue;
+
+    const dirx = -line.ny, diry = line.nx; // direction along the line
+    const L = Math.max(W, H) * 3.0;
+
+    const x0 = line.px - dirx * L;
+    const y0 = line.py - diry * L;
+    const x1 = line.px + dirx * L;
+    const y1 = line.py + diry * L;
+
+    const p0x = x0 * tile, p0y = y0 * tile;
+    const p1x = x1 * tile, p1y = y1 * tile;
+
+    const pulse = 0.55 + 0.45 * Math.sin(tNow * 3.15 + (line.px+line.py)*0.12);
+    const glowW = tile * thick * (4.10 + 0.95 * pulse);
+    const midW  = tile * thick * (2.10 + 0.45 * pulse);
+    const coreW = tile * thick * 0.62;
+
+    // Outer glow
+    ctx.strokeStyle = `rgba(255, 80, 205, ${(0.14 + 0.10*pulse) * alphaScale})`;
+    ctx.lineWidth = glowW;
+    ctx.beginPath(); ctx.moveTo(p0x,p0y); ctx.lineTo(p1x,p1y); ctx.stroke();
+
+    // Mid beam
+    ctx.strokeStyle = `rgba(255, 105, 230, ${(0.26 + 0.12*pulse) * alphaScale})`;
+    ctx.lineWidth = midW;
+    ctx.beginPath(); ctx.moveTo(p0x,p0y); ctx.lineTo(p1x,p1y); ctx.stroke();
+
+    // Bright core
+    ctx.strokeStyle = `rgba(255, 210, 245, ${(0.58 + 0.22*pulse) * alphaScale})`;
+    ctx.lineWidth = coreW;
+    ctx.beginPath(); ctx.moveTo(p0x,p0y); ctx.lineTo(p1x,p1y); ctx.stroke();
+
+    // Tiny sparkles along the beam
+    ctx.globalCompositeOperation = 'lighter';
+    for(let i=0;i<10;i++){
+      const t = (i/10) + (Math.sin(tNow*0.9 + i)*0.02);
+      const sx = lerp(p0x, p1x, t);
+      const sy = lerp(p0y, p1y, t);
+      const r = 1.0 + (Math.random()*2.0);
+      ctx.fillStyle = `rgba(255, 220, 250, ${(0.10 + 0.10*Math.random()) * alphaScale})`;
+      ctx.beginPath();
+      ctx.arc(sx + rnd(-3,3), sy + rnd(-3,3), r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'screen';
+  }
+
+  ctx.restore();
+}
+
+function updateSingLineMovement(dt){
+  if(!singLines.length) return;
+  if(!(phase === 'SING' || phase === 'LOOK')) return;
+
+  const minX = 2.0, maxX = W - 2.0;
+  const minY = FINISH_Y + 3.0, maxY = START_ZONE_Y - 3.0;
+
+  for(const line of singLines){
+    if(!line.active) continue;
+
+    const sp = (line.moveSpeed ?? 4.2);
+    let px = line.px + line.nx * line.moveDir * sp * dt;
+    let py = line.py + line.ny * line.moveDir * sp * dt;
+
+    if(px < minX || px > maxX || py < minY || py > maxY){
+      line.moveDir *= -1;
+      px = line.px + line.nx * line.moveDir * sp * dt;
+      py = line.py + line.ny * line.moveDir * sp * dt;
+    }
+
+    line.px = clamp(px, minX, maxX);
+    line.py = clamp(py, minY, maxY);
+  }
+}
+
+// ===== Input =====
+  const keys = {up:false,down:false,left:false,right:false,shift:false};
+  window.addEventListener('keydown', (e)=>{
+    if(e.key==='ArrowUp') keys.up=true;
+    else if(e.key==='ArrowDown') keys.down=true;
+    else if(e.key==='ArrowLeft') keys.left=true;
+    else if(e.key==='ArrowRight') keys.right=true;
+    else if(e.key==='Shift') keys.shift=true;
+    else if(e.key.toLowerCase()==='r'){
+      // Repeat current level (same number of players as when the level started)
+      repeatLevel();
+    }
+    else if(e.key.toLowerCase()==='i'){
+      // Restart the whole run back to level 1 (only in end-of-level overlay)
+      if(overlayMode !== 'none') restartRun();
+    }
+    else if(e.key.toLowerCase()==='s'){
+      // Next level (only after reaching the goal)
+      if(overlayMode === 'meta') goNextLevel();
+    }
+});
+  window.addEventListener('keyup', (e)=>{
+    if(e.key==='ArrowUp') keys.up=false;
+    else if(e.key==='ArrowDown') keys.down=false;
+    else if(e.key==='ArrowLeft') keys.left=false;
+    else if(e.key==='ArrowRight') keys.right=false;
+    else if(e.key==='Shift') keys.shift=false;
+  });
+
+function snapshotCounts(){
+  // Counts based on the CURRENT moment (game continues underneath the overlay).
+  let savedTotal = 0;
+  let savedNpc = 0;
+  let aliveTotal = 0;
+  let aliveNpc = 0;
+  let aliveNpcNotMeta = 0;
+
+  for(const e of entities){
+    if(!e.alive) continue;
+    aliveTotal++;
+    if(e.kind === 'npc'){
+      aliveNpc++;
+      if(!inMeta(e)) aliveNpcNotMeta++;
+    }
+    if(inMeta(e)){
+      savedTotal++;
+      if(e.kind === 'npc') savedNpc++;
+    }
+  }
+  return {savedTotal, savedNpc, aliveTotal, aliveNpc, aliveNpcNotMeta};
+}
+
+function showOverlay(mode){
+  // Non-pausing overlay: simulation continues underneath; we only switch state.
+  overlayMode = mode;
+}
+
+function hideOverlay(){
+  overlayMode = 'none';
+}
+
+function promptDeathOverlay(){
+  if(deathOverlayShown) return;
+  deathOverlayShown = true;
+  showOverlay('death');
+}
+
+function promptMetaOverlay(){
+  if(metaOverlayShown) return;
+  metaOverlayShown = true;
+  showOverlay('meta');
+}
+
+function promptVictoryOverlay(){
+  if(victoryOverlayShown) return;
+  victoryOverlayShown = true;
+  showOverlay('victory');
+}
+
+
+function restartRun(){
+  level = 1;
+  npcCount = INITIAL_NPC_COUNT;
+  reset();
+}
+
+function repeatLevel(){
+  npcCount = levelStartNpcCount;
+  reset();
+}
+
+// Backwards alias (R during play)
+function restartLevel(){
+  repeatLevel();
+}
+
+function goNextLevel(){
+  if(overlayMode !== 'meta') return;
+  if(!player || !player.alive || !inMeta(player)) return;
+
+  const snap = snapshotCounts();
+  const halfCarry = (timeLeft > 0.0001) ? Math.floor(snap.aliveNpcNotMeta * 0.5) : 0;
+  const nextNpcCount = snap.savedNpc + halfCarry;
+
+  // Requested: set time to 0 and eliminate anyone who didn't reach the goal.
+  timeLeft = 0;
+  for(const e of entities){
+    if(e.alive && !inMeta(e)) e.alive = false;
+  }
+  updateUI();
+
+  // Transition immediately.
+  level += 1;
+  npcCount = nextNpcCount;
+  reset();
+}
+
+
+  // ===== State =====
+  let obstacles = new Set();
+  let puddles = [];   // {x,y,r0,r1,t,cur}
+  let shots = [];     // {sx,sy, tx,ty, t, dur, puddleR}
+  let entities = [];
+  let player = null;
+let soldiers = [];
+
+// ===== Level progression =====
+let level = 1;
+let npcCount = INITIAL_NPC_COUNT;
+let levelStartNpcCount = npcCount; // players at the start of the current level (for 'Repetir')
+
+// Overlay / progression state
+let playerReachedMeta = false;
+
+
+  let distMap = null; // distance-to-finish flow field
+
+  let phase = 'COUNTDOWN';
+  let countdown = START_COUNTDOWN;
+  let timeLeft = levelMaxTime;
+  let gameOver = false;
+  let win = false;
+  let playerDeathPuddleMade = false;
+  let timeoutTriggered = false;
+  let playerLost = false;
+
+  // singing countdown (10 units)
+  let singUnits = 10;
+  let singTotal = 2.5;
+  let singUnitTime = 0.25;
+  let singAcc = 0;
+
+  // Pink "spotlight line" modifier (always ON for now)
+// A thick glowing pink band during LOOK.
+// If you're inside the band AND the doll sees you (in FOV + LOS) => shot (even if not moving).
+let singLines = [];
+  let singLineAcc = 0;
+  // looking sweep
+  let lookT = 0;
+  let scanPos = 0;
+  let scanDir = 1;
+  let scanSpeed = 0.6;
+  let detectAcc = 0;
+
+  // doll
+  let doll = {x: W/2, y: 1.2, base: Math.PI/2, ang: Math.PI/2};
+
+  let hashCache = new Map();
+  let visiblePolyCache = null;
+  let visiblePolyTimer = 0;
+
+  // for pulsing player
+  let tNow = 0;
+
+  // ===== Entity =====
+  function makeEntity(kind, x,y, extra={}){
+    return {
+      kind, x, y,
+      vx: 0, vy: 0,
+      fx: x, fy: y,
+      alive: true,
+      momentum: 0,
+      slip: 0,
+      onPPrev: false,
+      temperament: extra.temperament ?? Math.random(),
+      speedMul: extra.speedMul ?? 1.0,
+      accelMul: extra.accelMul ?? 1.0,
+      sizeMul: extra.sizeMul ?? 1.0,
+      clumsy: extra.clumsy ?? 2,
+      aiT: rnd(0.18,0.55),
+      ax: 0, ay: -1,
+      watched: false,
+      sprintCoast: 0,
+      stuck: 0,
+      prevX: x,
+      prevY: y,
+      sprinter: extra.sprinter ?? false,
+      burstT: 0,
+      escapeDir: 0,
+      escapeT: 0,
+      metaGX: 0,
+      metaGY: 0,
+      metaT: 0,
+    };
+  }
+
+  // ===== Obstacles: grouped shapes biased near START =====
+  const SHAPES = [
+    [[0,0],[1,0],[2,0],[3,0]],
+    [[0,0],[1,0],[0,1],[1,1]],
+    [[0,0],[1,0],[2,0],[1,1]],
+    [[0,0],[0,1],[0,2],[1,2]],
+    [[1,0],[1,1],[1,2],[0,2]],
+    [[1,0],[2,0],[0,1],[1,1]],
+    [[0,0],[1,0],[1,1],[2,1]],
+    [[0,0],[1,0],[2,0]],
+    [[0,0],[0,1],[1,1]],
+  ];
+
+  function rotCells(cells, k){
+    let out = cells.map(([x,y])=>[x,y]);
+    for(let i=0;i<k;i++) out = out.map(([x,y])=>[y,-x]);
+    return out;
+  }
+  function flipCells(cells){ return cells.map(([x,y])=>[-x,y]); }
+  function normToOrigin(cells){
+    let minX=Infinity,minY=Infinity;
+    for(const [x,y] of cells){ minX=Math.min(minX,x); minY=Math.min(minY,y); }
+    return cells.map(([x,y])=>[x-minX,y-minY]);
+  }
+
+  function placeObstacleShapes(){
+    obstacles = new Set();
+    let placed = 0;
+    let tries = 0;
+
+    while(placed < (OBSTACLE_TILES - EXTRA_START_OBS) && tries < 160000){
+      tries++;
+      let cells = SHAPES[Math.floor(Math.random()*SHAPES.length)];
+      const k = Math.floor(Math.random()*4);
+      const doFlip = Math.random() < 0.35;
+
+      let c = rotCells(cells, k);
+      if(doFlip) c = flipCells(c);
+      c = normToOrigin(c);
+
+      let maxX=0,maxY=0;
+      for(const [x,y] of c){ maxX=Math.max(maxX,x); maxY=Math.max(maxY,y); }
+
+      const x0 = rndi(2, W - 3 - maxX);
+
+      const high = Math.floor(START_ZONE_Y) - 4 - maxY;
+      const low = Math.max(7, high - 18);
+      if(high <= low) continue;
+      const y0 = rndi(low, high);
+
+      let ok = true;
+      for(const [dx,dy] of c){
+        const tx = x0 + dx;
+        const ty = y0 + dy;
+        if(tx<0||ty<0||tx>=W||ty>=H) { ok=false; break; }
+        if(ty >= START_ZONE_Y - 0.5) { ok=false; break; }
+        if(ty <= 4) { ok=false; break; }
+        if(obstacles.has(hash(tx,ty))) { ok=false; break; }
+      }
+      if(!ok) continue;
+
+      for(const [dx,dy] of c) obstacles.add(hash(x0+dx, y0+dy));
+      placed += c.length;
+    }
+
+    for(let i=0;i<EXTRA_START_OBS;i++){
+      for(let k=0;k<1500;k++){
+        const tx = rndi(3, W-4);
+        const ty = rndi(Math.floor(START_ZONE_Y)-7, Math.floor(START_ZONE_Y)-2);
+        if(ty <= 4) continue;
+        const key = hash(tx,ty);
+        if(obstacles.has(key)) continue;
+        obstacles.add(key);
+        break;
+      }
+    }
+
+    while(obstacles.size > OBSTACLE_TILES){
+      const arr = Array.from(obstacles);
+      obstacles.delete(arr[Math.floor(Math.random()*arr.length)]);
+    }
+  }
+
+  function makeSoldiers(){
+    soldiers = [];
+    const y = 1.55;
+    soldiers.push({x: W/2 - 10.5, y});
+    soldiers.push({x: W/2 + 10.5, y});
+  }
+
+
+  function computeDistMap(){
+    // 4-neighbor BFS from finish band. Used by NPCs to navigate around obstacles.
+    const INF = 1e9;
+    const dist = Array.from({length:H}, ()=>Array(W).fill(INF));
+    const qx = new Int16Array(W*H);
+    const qy = new Int16Array(W*H);
+    let qh=0, qt=0;
+
+    for(let y=0; y<=Math.floor(FINISH_Y); y++){
+      for(let x=0; x<W; x++){
+        if(isBlocked(x,y)) continue;
+        dist[y][x] = 0;
+        qx[qt]=x; qy[qt]=y; qt++;
+      }
+    }
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    while(qh<qt){
+      const x = qx[qh], y = qy[qh]; qh++;
+      const d0 = dist[y][x] + 1;
+      for(const [dx,dy] of dirs){
+        const nx = x+dx, ny=y+dy;
+        if(nx<0||ny<0||nx>=W||ny>=H) continue;
+        if(isBlocked(nx,ny)) continue;
+        if(dist[ny][nx] <= d0) continue;
+        dist[ny][nx] = d0;
+        qx[qt]=nx; qy[qt]=ny; qt++;
+      }
+    }
+    distMap = dist;
+  }
+
+  function isStartReachable(){
+    if(!distMap) return true;
+    const y = Math.max(1, Math.floor(START_ZONE_Y)-2);
+    let total=0, ok=0;
+    // sample across the width just above the start zone
+    for(let x=2; x<W-2; x++){
+      if(isBlocked(x,y)) continue;
+      total++;
+      if(distMap[y][x] < 1e9) ok++;
+    }
+    if(total === 0) return false;
+    // require a decent amount of reachable tiles so we don't create "cages"
+    return (ok/total) > 0.70;
+  }
+
+  function bestStepDir(x,y){
+    if(!distMap) return {dx:0,dy:-1, ok:false};
+    const tx = Math.floor(x), ty = Math.floor(y);
+    if(tx<0||ty<0||tx>=W||ty>=H) return {dx:0,dy:-1, ok:false};
+    const cur = distMap[ty][tx];
+    if(cur >= 1e9) return {dx:0,dy:-1, ok:false};
+
+    // Consider 8 directions but forbid corner-cutting for diagonals.
+    const cand = [
+      [0,-1],[-1,0],[1,0],[0,1],
+      [-1,-1],[1,-1],[-1,1],[1,1],
+    ];
+    let best = null;
+    let bestD = cur;
+
+    for(const [dx,dy] of cand){
+      const nx = tx+dx, ny = ty+dy;
+      if(nx<0||ny<0||nx>=W||ny>=H) continue;
+      if(isBlocked(nx,ny)) continue;
+      if(dx!==0 && dy!==0){
+        if(isBlocked(tx+dx, ty) || isBlocked(tx, ty+dy)) continue;
+      }
+      const d = distMap[ny][nx];
+      if(d < bestD){
+        bestD = d;
+        best = [dx,dy];
+      }
+    }
+    if(!best) return {dx:0,dy:-1, ok:true};
+    return {dx:best[0], dy:best[1], ok:true};
+  }
+
+  function reset(){
+    puddles = [];
+    shots = [];
+    entities = [];
+    detectAcc = 0;
+
+    playerReachedMeta = false;
+    metaOverlayShown = false;
+    deathOverlayShown = false;
+    victoryOverlayShown = false;
+    hideOverlay();
+
+    levelStartNpcCount = npcCount;
+
+    levelMaxTime = timeForLevel(level);
+    beamCount = beamsForLevel(level);
+
+    visiblePolyCache = null;
+    visiblePolyTimer = 0;
+    playerDeathPuddleMade = false;
+    timeoutTriggered = false;
+    playerLost = false;
+
+    singLines = [];
+
+    // Generate obstacles but ensure the start area remains reachable (avoid hard cages)
+    makeSoldiers();
+    let attempts = 0;
+    do {
+      placeObstacleShapes();
+      computeDistMap();
+      attempts++;
+    } while(!isStartReachable() && attempts < 14);
+
+
+    const px = rnd(4.0, W - 4.0);
+    const py = rnd(H - 1.95, H - 1.45);
+    player = makeEntity('player', px, py);
+    entities.push(player);
+
+    // clumsiness distribution: 3 -> 250, 2 -> 200, 1 -> rest
+    const grades = [];
+    for(let i=0;i<250;i++) grades.push(3);
+    for(let i=0;i<200;i++) grades.push(2);
+    while(grades.length < npcCount) grades.push(1);
+    shuffle(grades);
+
+    const yLine = H - 2.35;
+    for(let n=0; n<npcCount; n++){
+      const t = (npcCount === 1) ? 0.5 : (n / (npcCount - 1));
+      const nx = lerp(4.0, W - 4.0, t) + rnd(-0.02, 0.02);
+      const ny = yLine + rnd(-0.05, 0.05);
+
+      const clumsy = grades[n];
+
+      // Speed rule:
+      // - clumsy 1 (menos torpe) = más rápido.
+      // - el resto: cada uno con velocidad propia independiente del nivel (pero ahora más rápida para que algunos lleguen).
+      let speedMul;
+      if(clumsy === 1){
+        // Fast group (best players)
+        const r = Math.random();
+        speedMul = (r < 0.70) ? rnd(1.18, 1.50) : (r < 0.95) ? rnd(1.50, 1.75) : rnd(1.75, 2.05);
+      } else {
+        // Everyone else: wide spread (some slow, some surprisingly quick)
+        const r = Math.random();
+        if(r < 0.25) speedMul = rnd(0.55, 0.80);          // very slow
+        else if(r < 0.65) speedMul = rnd(0.80, 1.10);     // normal
+        else if(r < 0.90) speedMul = rnd(1.10, 1.35);     // quick
+        else speedMul = rnd(1.35, 1.70);                  // outliers
+      }
+const accelMul = rnd(0.88, 1.10);
+
+      // Torpeza baseline (slightly higher for all)
+      const baseT =
+        (clumsy === 1) ? rnd(0.70, 1.00) :
+        (clumsy === 2) ? rnd(0.65, 1.00) :
+        rnd(0.85, 1.00);      // Size variety (min = current). Some are VERY "gorditos" (up to ~2x the player footprint).
+      const uSize = Math.random();
+      let sizeMul;
+      if(uSize < 0.72) sizeMul = rnd(1.00, 1.20);
+      else if(uSize < 0.92) sizeMul = rnd(1.20, 1.85);
+      else if(uSize < 0.985) sizeMul = rnd(1.85, 3.10);
+      else sizeMul = rnd(3.10, NPC_MAX_SIZE_MUL); // rare giants
+
+      const sprinter = (Math.random() < 0.12); // more risk-takers
+      entities.push(makeEntity('npc', nx, ny, {temperament: baseT, speedMul, accelMul, sizeMul, clumsy, sprinter}));
+    }
+
+    phase = 'COUNTDOWN';
+    countdown = START_COUNTDOWN;
+    timeLeft = levelMaxTime;
+    gameOver = false;
+    win = false;
+
+    singUnits = 10;
+    singAcc = 0;
+    singTotal = pickSingTotal();
+    singUnitTime = singTotal / 10;
+
+    lookT = 0;
+    scanPos = 0;
+    scanDir = 1;
+    scanSpeed = 0.6;
+
+    doll = {x: W/2, y: 1.2, base: Math.PI/2, ang: Math.PI/2};
+
+    updateUI();
+  }
+
+  // ===== Spatial hash =====
+  function buildHash(){
+    const m = new Map();
+    for(let i=0;i<entities.length;i++){
+      const e = entities[i];
+      if(!e.alive) continue;
+      const cx = Math.floor(e.x);
+      const cy = Math.floor(e.y);
+      const k = hash(cx,cy);
+      if(!m.has(k)) m.set(k, []);
+      m.get(k).push(i);
+    }
+    return m;
+  }
+
+  // ===== Tile collisions =====
+  function isBlocked(tx,ty){
+    if(tx<0||ty<0||tx>=W||ty>=H) return true;
+    return obstacles.has(hash(tx,ty));
+  }
+  function tileCollides(x,y,r){
+    const minX = Math.floor(x - r), maxX = Math.floor(x + r);
+    const minY = Math.floor(y - r), maxY = Math.floor(y + r);
+    for(let ty=minY; ty<=maxY; ty++){
+      for(let tx=minX; tx<=maxX; tx++){
+        if(isBlocked(tx,ty)) return true;
+      }
+    }
+    return false;
+  }
+  function moveWithTiles(e, nx, ny){
+    const r = entRadius(e);
+    let x = nx, y = e.y;
+    if(tileCollides(x,y,r)){ x = e.x; e.vx = 0; }
+    y = ny;
+    if(tileCollides(x,y,r)){ y = e.y; e.vy = 0; }
+    e.x = x; e.y = y;
+  }
+
+  // ===== Puddles =====
+  function addPuddle(x,y,rTarget){
+    const r0 = Math.max(0.06, rTarget * 0.62);
+    puddles.push({x,y,r0,r1:rTarget,t:0,cur:r0});
+  }
+  function updatePuddles(dt){
+    for(const p of puddles){
+      p.t += dt;
+      const k = clamp(p.t / PUDDLE_GROW_TIME, 0, 1);
+      p.cur = lerp(p.r0, p.r1, k);
+    }
+  }
+  function inPuddle(e){
+    for(const p of puddles){
+      if(Math.hypot(e.x-p.x, e.y-p.y) <= p.cur) return true;
+    }
+    return false;
+  }
+
+  // ===== Shooting =====
+  function nearestSoldierTo(x,y){
+    let best = soldiers[0];
+    let bestD = Infinity;
+    for(const s of soldiers){
+      const d = (s.x-x)*(s.x-x) + (s.y-y)*(s.y-y);
+      if(d < bestD){ bestD = d; best = s; }
+    }
+    return best;
+  }
+  function spawnShotTo(targetX, targetY, puddleR, delay=0, killIndex=null){
+    const s = nearestSoldierTo(targetX, targetY);
+    shots.push({sx:s.x, sy:s.y, tx:targetX, ty:targetY, t:-delay, dur:SHOT_DUR, puddleR, killIndex});
+  }
+  function killNpcWithShot(e, puddleR){
+    // Safety: never kill anyone already inside the goal zone (meta)
+    if(inMeta(e)) return;
+    spawnShotTo(e.x, e.y, puddleR, 0);
+    e.alive = false;
+  }
+
+
+  function randomNpcPuddleRadius(e){
+    // High variety (tiny .. huge) like other executions
+    let r;
+    const u = Math.random();
+    if(u < 0.35) r = rnd(0.18, 0.42);           // tiny
+    else if(u < 0.82) r = rnd(0.42, 1.05);      // normal
+    else r = rnd(1.05, 2.05);                   // huge (rare)
+    if(e.clumsy === 3) r *= 1.12;
+    if(e.clumsy === 2) r *= 1.04;
+    if(e.clumsy === 1) r *= 0.96;
+    return clamp(r, 0.14, 2.30);
+  }
+
+  function applyLookLineHazard(){
+    if(!singLines.length || phase !== 'LOOK') return;
+
+    // Player: lit + seen => shot (even if still)
+    if(player && player.alive && !inMeta(player)){
+      if(singLineHitsEntity(player) && visibleInFOV(player.x, player.y, -1)){
+        spawnShotTo(player.x, player.y, 2.80, 0);
+        player.alive = false;
+        player.vx = 0; player.vy = 0;
+        playerLost = true;
+
+        promptDeathOverlay();
+        playerDeathPuddleMade = true;
+      }
+    }
+
+    // NPCs
+    for(let i=0;i<entities.length;i++){
+      const e = entities[i];
+      if(!e.alive || e.kind !== 'npc') continue;
+      if(inMeta(e)) continue;
+      if(singLineHitsEntity(e) && visibleInFOV(e.x, e.y, i)){
+        killNpcWithShot(e, randomNpcPuddleRadius(e));
+      }
+    }
+  }
+
+  function triggerTimeoutExecution(){
+    if(timeoutTriggered) return;
+    timeoutTriggered = true;
+    phase = 'TIMEOUT';
+
+    // Only shoot alive entities NOT in meta (zona verde).
+    let idx = 0;
+    for(let i=0;i<entities.length;i++){
+      const e = entities[i];
+      if(!e.alive) continue;
+      if(inMeta(e)) continue;
+
+      const delay = idx * 0.010 + rnd(0.00, 0.03); // one-by-one, fast cadence
+
+      // Freeze them in place so the execution is readable.
+      e.vx = 0; e.vy = 0;
+      e.ax = 0; e.ay = 0;
+
+      if(e.kind === 'player'){
+        spawnShotTo(e.x, e.y, 2.80, delay, i);
+        playerDeathPuddleMade = true;
+      } else {
+        // Puddle size: high variety (tiny .. huge)
+        let r;
+        const u = Math.random();
+        if(u < 0.35) r = rnd(0.18, 0.42);           // tiny
+        else if(u < 0.82) r = rnd(0.42, 1.05);      // normal
+        else r = rnd(1.05, 2.05);                   // huge (rare)
+        // clumsiness biases slightly, but size is mostly independent
+        if(e.clumsy === 3) r *= 1.12;
+        if(e.clumsy === 2) r *= 1.04;
+        if(e.clumsy === 1) r *= 0.96;
+        r = clamp(r, 0.14, 2.30);
+        spawnShotTo(e.x, e.y, r, delay, i);
+      }
+      idx++;
+    }
+
+    // Game ends at timeout. Survivors are the ones already in meta.
+    gameOver = true;
+    win = player.alive && inMeta(player);
+  }
+
+  // ===== Phase transitions =====
+  function startSing(){
+    phase = 'SING';
+    singUnits = 10;
+    singAcc = 0;
+    singTotal = pickSingTotal();
+    singUnitTime = singTotal / 10;
+    doll.ang = doll.base;
+
+    // Pink spotlight line: appears during SING (warning) and stays active through LOOK.
+    newSingLine();
+    singLineAcc = 0;
+  }
+  function startLook(){
+    phase = 'LOOK';
+
+    // Pink spotlight line was spawned during SING; keep it for LOOK. (Fallback: spawn if missing.)
+    if(!singLines.length) newSingLine();
+    singLineAcc = 0;
+    // Immediate check at the moment LOOK starts
+    applyLookLineHazard();
+
+    const sweeps = (Math.random() < 0.72) ? rndi(2,3) : rndi(1,2); // max 3
+    const perSweep = rnd(LOOK_SWEEP_TIME_RANGE[0], LOOK_SWEEP_TIME_RANGE[1]);
+    lookT = sweeps * perSweep;
+
+    const startFromLeft = Math.random() < 0.5;
+    scanPos = startFromLeft ? -SCAN_LIMIT : SCAN_LIMIT;
+    scanDir = startFromLeft ? 1 : -1;
+
+    // slightly faster scan speed than pure 2/perSweep
+    scanSpeed = (2 / Math.max(0.25, perSweep)) * 1.18;
+
+    detectAcc = 0;
+
+    // Brake NPCs a bit (still sloppy)
+    for(const e of entities){
+      if(!e.alive || e.kind !== 'npc') continue;
+      const damp =
+        (e.clumsy === 1) ? 0.58 :
+        (e.clumsy === 2) ? 0.52 :
+        0.72;
+      e.vx *= damp;
+      e.vy *= damp;
+      e.ax = 0; e.ay = 0;
+    }
+
+    visiblePolyCache = null;
+    visiblePolyTimer = 0;
+  }
+
+  // ===== LOS / FOV =====
+  function losBlocked(x0,y0,x1,y1, ignoreIndex=-1){
+    const dist = Math.hypot(x1-x0, y1-y0);
+    const steps = Math.ceil(dist * 1.0);
+    for(let i=1;i<steps;i++){
+      const t = i/steps;
+      const x = x0 + (x1-x0)*t;
+      const y = y0 + (y1-y0)*t;
+      const tx = Math.floor(x), ty = Math.floor(y);
+      if(isBlocked(tx,ty)) return true;
+
+      const k = hash(tx,ty);
+      const arr = hashCache.get(k);
+      if(arr){
+        for(const idx of arr){
+          if(idx === ignoreIndex) continue;
+          const e = entities[idx];
+          if(!e.alive || e.kind !== 'npc') continue;
+          if(Math.hypot(e.x-x, e.y-y) < (entRadius(e) + 0.06)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function visibleInFOV(x,y, ignoreIndex=-1){
+    const dx = x - doll.x, dy = y - doll.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist < 0.001 || dist > FOV_RANGE) return false;
+    const ang = Math.atan2(dy,dx);
+    const d = Math.abs(angleDiff(ang, doll.ang));
+    if(d > FOV_HALF_ANGLE) return false;
+    if(losBlocked(doll.x, doll.y, x, y, ignoreIndex)) return false;
+    return true;
+  }
+
+  function computeVisiblePoly(){
+    const rays = 150;
+    const step = 0.22;
+    const pts = [];
+    for(let i=0;i<=rays;i++){
+      const t = i / rays;
+      const ang = doll.ang + lerp(-FOV_HALF_ANGLE, FOV_HALF_ANGLE, t);
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+      let dist = 0;
+      let lastX = doll.x, lastY = doll.y;
+
+      while(dist <= FOV_RANGE){
+        const x = doll.x + dx*dist;
+        const y = doll.y + dy*dist;
+        const tx = Math.floor(x), ty = Math.floor(y);
+        if(tx<0 || ty<0 || tx>=W || ty>=H) break;
+        if(isBlocked(tx,ty)) break;
+        lastX = x; lastY = y;
+        dist += step;
+      }
+      pts.push([lastX, lastY]);
+    }
+    return pts;
+  }
+
+  // ===== AI =====
+  function npcUpdateAI(npc, idx, dt){
+    const size = (npc.sizeMul ?? 1);
+    const fatF = clamp((size - 1) / (NPC_MAX_SIZE_MUL - 1), 0, 1);
+    const urgency = (timeLeft <= 10) ? clamp((10 - timeLeft) / 10, 0, 1) : 0; // last-10s bravery
+
+    // If in meta (zona verde), wander around inside the finish area.
+    if(inMeta(npc)){
+      npc.metaT -= dt;
+      const gx = npc.metaGX, gy = npc.metaGY;
+      if(!gx || npc.metaT <= 0 || Math.hypot(gx - npc.x, gy - npc.y) < 0.55){
+        npc.metaGX = rnd(2.5, W - 2.5);
+        npc.metaGY = rnd(0.7, FINISH_Y - 0.55);
+        npc.metaT = rnd(0.75, 1.75);
+      }
+      const v = norm(npc.metaGX - npc.x, npc.metaGY - npc.y);
+      npc.ax = v.x; npc.ay = v.y;
+      npc.aiT = rnd(0.10, 0.28);
+      return;
+    }
+
+    // Escape mode: force a direction for a short time to avoid getting stuck.
+    if(npc.escapeT > 0){
+      npc.aiT = rnd(0.06, 0.14);
+      npc.ax = npc.escapeDir;
+      npc.ay = -0.62;
+      return;
+    }
+
+    npc.aiT -= dt;
+    if(npc.aiT > 0) return;
+
+    npc.aiT =
+      (npc.clumsy === 1) ? rnd(0.18, 0.62) :
+      (npc.clumsy === 2) ? rnd(0.26, 0.90) :
+      rnd(0.36, 1.12);
+
+    // Bigger NPCs react a bit slower (more \"torpes\")
+    npc.aiT *= (1 + fatF * 0.28);
+
+    // When <=10s left, NPCs become more "valientes": react more often.
+    if(urgency > 0) npc.aiT = Math.max(0.05, npc.aiT * (1 - 0.55 * urgency));
+
+    if(phase === 'LOOK'){
+      const watched = visibleInFOV(npc.x, npc.y, idx);
+      npc.watched = watched;
+
+      
+// Pink spotlight bands: if you're near/inside any lit band, try to escape when it's safe (not watched).
+if(singLines.length){
+  const info = nearestSingLineInfo(npc.x, npc.y);
+  const line = info.line;
+  if(line){
+    const sd = info.sd;
+    const ad = info.ad;
+    const avoid = line.avoidDist;
+
+    if(!watched && ad < avoid){
+      const sign = (sd === 0) ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(sd);
+      const t = 1 - clamp(ad / avoid, 0, 1);
+      const strength = (1.20 + 1.90 * t) * (1 + fatF * 0.22) * (1 - urgency * 0.55);
+      npc.ax = line.nx * sign * strength;
+      npc.ay = line.ny * sign * strength;
+      npc.aiT = rnd(0.08, 0.16);
+      return;
+    }
+  }
+}
+
+if(watched){
+        const baseFidget =
+          (npc.clumsy === 1) ? 0.160 :
+          (npc.clumsy === 2) ? 0.120 :
+          0.300;
+
+        const fidget = clamp(baseFidget + fatF*0.085 + urgency*0.28, 0, 0.70);
+        // Panic move: in the last seconds, some NPCs will take huge risks even while watched.
+        if(urgency > 0 && Math.random() < (0.02 + 0.18*urgency)){
+          npc.burstT = Math.max(npc.burstT, rnd(0.18, 0.46));
+          npc.ax = rnd(-0.45, 0.45);
+          npc.ay = rnd(-1.10, -0.70);
+          npc.aiT = rnd(0.06, 0.14);
+          return;
+        }
+
+        if(Math.random() < fidget){
+          const mag =
+            (npc.clumsy === 1) ? 0.95 :
+            (npc.clumsy === 2) ? 0.78 :
+            1.18;
+
+          npc.ax = rnd(-mag, mag);
+          npc.ay = rnd(-mag, mag);
+
+          if(npc.clumsy === 3 && Math.random() < 0.55){
+            npc.ay = rnd(-1.0, -0.18);
+            npc.ax = rnd(-0.62, 0.62);
+          }
+        } else {
+          npc.ax = 0;
+          npc.ay = 0;
+        }
+        return;
+      }
+
+      // When not watched, most NPCs freeze... but some will creep forward slightly.
+      if(!npc.sprinter){
+        const baseCreepP =
+          (npc.clumsy === 1) ? 0.06 :
+          (npc.clumsy === 2) ? 0.04 :
+          0.03;
+        // With <=10s left, creep a lot more (risk).
+        const creepP = clamp(baseCreepP + urgency*0.28, 0, 0.60);
+        if(Math.random() < creepP){
+          const step = bestStepDir(npc.x, npc.y);
+          npc.ax = step.dx * 0.65;
+          npc.ay = Math.min(-0.35, step.dy * 0.65);
+          npc.aiT = rnd(0.10, 0.20);
+          return;
+        }
+      }
+
+      // A few NPCs will "sprint" when the sweep is clearly not pointing at them.
+      if(npc.sprinter){
+        const angToNpc = Math.atan2(npc.y - doll.y, npc.x - doll.x);
+        const away = Math.abs(angleDiff(angToNpc, doll.ang)) > (FOV_HALF_ANGLE * 1.60);
+        if(away && Math.random() < (0.40 + 0.45*urgency)){
+          npc.burstT = rnd(0.20, 0.46);
+          npc.ax = rnd(-0.55, 0.55);
+          npc.ay = rnd(-1.00, -0.65);
+          npc.aiT = rnd(0.08, 0.18);
+          return;
+        }
+
+        // Endgame desperation: even if the sweep isn't clearly away, some sprinters may gamble.
+        if(urgency > 0.55 && Math.random() < (0.18 * urgency)){
+          npc.burstT = Math.max(npc.burstT, rnd(0.18, 0.38));
+          npc.ax = rnd(-0.35, 0.35);
+          npc.ay = rnd(-1.00, -0.55);
+          npc.aiT = rnd(0.08, 0.16);
+          return;
+        }
+      }
+
+      const baseMistake =
+        (npc.clumsy === 1) ? 0.200 :
+        (npc.clumsy === 2) ? 0.160 :
+        0.280;
+
+      const mistake = clamp(baseMistake + npc.temperament*0.095 + fatF*0.085, 0, 0.65);
+      if(Math.random() < mistake){
+        const sx =
+          (npc.clumsy === 1) ? 1.10 :
+          (npc.clumsy === 2) ? 0.78 :
+          1.22;
+        const syA =
+          (npc.clumsy === 1) ? -1.00 :
+          (npc.clumsy === 2) ? -0.84 :
+          -1.00;
+        const syB =
+          (npc.clumsy === 1) ?  0.18 :
+          (npc.clumsy === 2) ?  0.10 :
+           0.18;
+
+        npc.ax = rnd(-sx, sx);
+        npc.ay = rnd(syA, syB);
+      } else {
+        npc.ax = 0;
+        npc.ay = 0;
+      }
+      return;
+    }
+
+    // SING
+    // If this NPC is getting stuck, pick the best escape direction based on local clearance.
+    if(npc.stuck > 0.28){
+      const tx = Math.floor(npc.x), ty = Math.floor(npc.y);
+      const dirs = [
+        [-1,-1],[1,-1],[-1,0],[1,0],[0,-1]
+      ];
+      let best = dirs[0], bestScore = -1;
+      for(const d of dirs){
+        let score = 0;
+        for(let k=1;k<=7;k++){
+          const x = tx + d[0]*k;
+          const y = ty + d[1]*k;
+          if(isBlocked(x,y)) break;
+          score += 1;
+        }
+        // prefer moving upward
+        score += (d[1] < 0) ? 0.8 : 0;
+        if(score > bestScore){ bestScore = score; best = d; }
+      }
+      npc.escapeDir = best[0];
+      npc.escapeT = rnd(0.22, 0.45);
+      npc.burstT = rnd(0.18, 0.32);
+      npc.aiT = rnd(0.06, 0.14);
+      npc.ax = npc.escapeDir * 2.6;
+      npc.ay = -0.55;
+      return;
+    }
+    // Follow flow-field toward goal, with clumsiness noise + separation.
+    const step = bestStepDir(npc.x, npc.y);
+    let ax = step.dx, ay = step.dy;
+
+    // If we're in an unreachable pocket (dist INF), pick a direction with most open space.
+    if(!step.ok){
+      const tx = Math.floor(npc.x), ty = Math.floor(npc.y);
+      const cand = [[0,-1],[-1,0],[1,0],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+      let best = cand[0], bestScore = -1;
+      for(const [dx,dy] of cand){
+        // avoid corner cutting for diagonals
+        if(dx!==0 && dy!==0 && (isBlocked(tx+dx,ty) || isBlocked(tx,ty+dy))) continue;
+        let score = 0;
+        for(let k=1;k<=7;k++){
+          const nx = tx + dx*k, ny = ty + dy*k;
+          if(nx<0||ny<0||nx>=W||ny>=H) break;
+          if(isBlocked(nx,ny)) break;
+          score += 1;
+          if(distMap && distMap[ny][nx] < 1e9) score += 0.65; // bias toward reachable space
+        }
+        if(score > bestScore){ bestScore = score; best = [dx,dy]; }
+      }
+      ax = best[0]; ay = best[1];
+    }
+
+    
+// Pink spotlight bands avoidance during SING: run away from any band while it's visible.
+if(singLines.length){
+  for(const line of singLines){
+    if(!line.active) continue;
+    const sd = signedDistToLine(line, npc.x, npc.y);
+    const ad = Math.abs(sd);
+    const avoid = line.avoidDist;
+    if(ad < avoid){
+      const sign = (sd === 0) ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(sd);
+      const t = 1 - clamp(ad / avoid, 0, 1);
+      const strength = (0.85 + 2.60 * t) * (1 + fatF * 0.30) * (1 - urgency * 0.75);
+      ax += line.nx * sign * strength;
+      ay += line.ny * sign * strength;
+    }
+  }
+}
+
+
+// Separation: push away from nearby NPCs so they don't jam behind obstacles.
+    {
+      const tx = Math.floor(npc.x), ty = Math.floor(npc.y);
+      let rx = 0, ry = 0;
+      for(let oy=-1; oy<=1; oy++){
+        for(let ox=-1; ox<=1; ox++){
+          const k = hash(tx+ox, ty+oy);
+          const bucket = hashCache.get(k);
+          if(!bucket) continue;
+          for(const j of bucket){
+            if(j === idx) continue;
+            const o = entities[j];
+            if(!o || !o.alive || o.kind!=='npc') continue;
+            const dx = npc.x - o.x;
+            const dy = npc.y - o.y;
+            const d2 = dx*dx + dy*dy;
+            if(d2 < 0.0001 || d2 > 0.18) continue; // ~0.42 radius
+            const inv = 1.0 / (d2 + 0.02);
+            rx += dx * inv;
+            ry += dy * inv;
+          }
+        }
+      }
+      // Obstacle repulsion (keeps them sliding along walls)
+      for(let oy=-1; oy<=1; oy++){
+        for(let ox=-1; ox<=1; ox++){
+          if(ox===0 && oy===0) continue;
+          if(!isBlocked(tx+ox, ty+oy)) continue;
+          const cx = (tx+ox) + 0.5;
+          const cy = (ty+oy) + 0.5;
+          const dx = npc.x - cx;
+          const dy = npc.y - cy;
+          const d2 = dx*dx + dy*dy;
+          if(d2 > 1.20) continue;
+          const inv = 1.0 / (d2 + 0.08);
+          rx += dx * inv * 0.85;
+          ry += dy * inv * 0.85;
+        }
+      }
+      const r = norm(rx, ry);
+      // more effect when clumsy (they bump more)
+      const sep =
+        (npc.clumsy === 1) ? 0.18 :
+        (npc.clumsy === 2) ? 0.26 :
+        0.40;
+      ax += r.x * sep;
+      ay += r.y * sep;
+    }
+    // Noise / mistakes (more for clumsy NPCs)
+    const baseNoise =
+      (npc.clumsy === 1) ? 0.20 :
+      (npc.clumsy === 2) ? 0.35 :
+      0.65;
+
+    const noise = baseNoise * (1 + fatF*0.85) * (1 - 0.55*urgency);
+
+    const wobble = noise * (0.45 + npc.temperament*0.55);
+
+    // Occasionally commit a wrong turn (esp. clumsy)
+    const baseWrongP =
+      (npc.clumsy === 1) ? 0.06 :
+      (npc.clumsy === 2) ? 0.10 :
+      0.20;
+
+    const wrongP = clamp(baseWrongP + fatF*0.10, 0, 0.35);
+
+    if(Math.random() < wrongP){
+      ax = rnd(-1,1);
+      ay = rnd(-1,0.55);
+    } else {
+      ax += rnd(-wobble, wobble);
+      ay += rnd(-wobble, wobble);
+    }
+
+    if(inPuddle(npc) && Math.random() < (npc.clumsy===3 ? 0.75 : 0.45)){
+      ax += (Math.random()<0.5 ? -1 : 1) * (npc.clumsy===3 ? 1.05 : 0.65);
+      ay *= 0.80;
+    }
+    // End-of-level bravery: in the last 10 seconds, if they're still outside the goal,
+    // they will push harder (faster bursts) even if it's risky.
+    if(urgency > 0 && Math.random() < (0.10 + 0.25*urgency)){
+      npc.burstT = Math.max(npc.burstT, rnd(0.18, 0.55));
+    }
+
+
+    const n = norm(ax,ay);
+    npc.ax = n.x; npc.ay = n.y;
+  }
+
+  // ===== Entity collisions =====
+  function resolveEntityOverlaps(){
+    // Two quick iterations give stable "push" behavior with many NPCs.
+    for(let iter=0; iter<2; iter++){
+      if(iter>0) hashCache = buildHash();
+
+      for(let i=0;i<entities.length;i++){
+        const a = entities[i];
+        if(!a.alive) continue;
+
+        const ar = entRadius(a);
+        let ma = (ar*ar) + 0.0001; // pseudo-mass
+        if(a.kind==='player' && playerReachedMeta) ma *= 2500;
+
+        const cx = Math.floor(a.x), cy = Math.floor(a.y);
+
+        for(let oy=-1; oy<=1; oy++){
+          for(let ox=-1; ox<=1; ox++){
+            const k = hash(cx+ox, cy+oy);
+            const arr = hashCache.get(k);
+            if(!arr) continue;
+
+            for(const j of arr){
+              if(j <= i) continue;
+
+              const b = entities[j];
+              if(!b.alive) continue;
+
+              const br = entRadius(b);
+              let mb = (br*br) + 0.0001;
+              if(b.kind==='player' && playerReachedMeta) mb *= 2500;
+
+              const dx = b.x - a.x, dy = b.y - a.y;
+              const minD = ar + br;
+              const d2 = dx*dx + dy*dy;
+              if(d2 < 1e-10 || d2 >= minD*minD) continue;
+
+              const d = Math.sqrt(d2);
+              const nx = dx / d, ny = dy / d;
+              const overlap = (minD - d);
+
+              // Heavier (bigger) bodies move less.
+              const invSum = 1.0 / (ma + mb);
+              const wa = mb * invSum;
+              const wb = ma * invSum;
+
+              const push = overlap * 0.90;
+
+              a.x -= nx * push * wa; a.y -= ny * push * wa;
+              b.x += nx * push * wb; b.y += ny * push * wb;
+
+              // A bit of velocity response so the shove is noticeable (player <-> NPC too).
+              const imp = overlap * 14.0;
+              a.vx -= nx * imp * wa; a.vy -= ny * imp * wa;
+              b.vx += nx * imp * wb; b.vy += ny * imp * wb;
+
+              // Keep them inside bounds and out of walls after being pushed.
+              a.x = clamp(a.x, 0.35, W-0.35);
+              a.y = clamp(a.y, 0.35, H-0.35);
+              b.x = clamp(b.x, 0.35, W-0.35);
+              b.y = clamp(b.y, 0.35, H-0.35);
+
+              if(tileCollides(a.x, a.y, ar)){
+                a.x = (a.safeX ?? a.x); a.y = (a.safeY ?? a.y);
+                a.vx *= 0.15; a.vy *= 0.15;
+              }
+              if(tileCollides(b.x, b.y, br)){
+                b.x = (b.safeX ?? b.x); b.y = (b.safeY ?? b.y);
+                b.vx *= 0.15; b.vy *= 0.15;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+
+
+  function checkAllAliveInMeta(){
+    if(!player.alive) return false;
+    if(!inMeta(player)) return false;
+    for(const e of entities){
+      if(!e.alive) continue;
+      if(!inMeta(e)) return false;
+    }
+    return true;
+  }
+function onPlayerEnterMeta(){
+  if(playerReachedMeta) return;
+  playerReachedMeta = true;
+  if(player){
+    player.vx = 0; player.vy = 0;
+    player.momentum = 0;
+  }
+  // Decide which overlay to show, but do not pause the simulation.
+  const snap = snapshotCounts();
+  if(snap.aliveNpc === 0){
+    promptVictoryOverlay();
+  } else {
+    promptMetaOverlay();
+  }
+  clampPlayerInMeta();
+}
+
+// ===== Step =====
+  function step(dt){
+    tNow += dt;
+
+    // Always animate shots + puddle growth (even after gameOver)
+    for(const sh of shots) sh.t += dt;
+    for(let i=shots.length-1;i>=0;i--){
+      const sh = shots[i];
+      if(sh.t < 0) continue;
+      if(sh.t >= sh.dur){
+        // If this shot is meant to "execute" an entity, keep it visible until impact.
+        if(sh.killIndex !== null && sh.killIndex !== undefined){
+          const e = entities[sh.killIndex];
+          if(e && e.alive){
+            // Never kill anyone already inside the goal zone (meta)
+            if(!inMeta(e)){
+              // puddle at the entity position (frozen at timeout)
+              addPuddle(e.x, e.y, sh.puddleR);
+              e.alive = false;
+              if(e.kind === 'player'){
+                playerLost = true;
+
+                promptDeathOverlay();
+                playerDeathPuddleMade = true;
+              }
+            }
+          } else {
+            addPuddle(sh.tx, sh.ty, sh.puddleR);
+          }
+        } else {
+          addPuddle(sh.tx, sh.ty, sh.puddleR);
+        }
+        shots.splice(i,1);
+      }
+    }
+    updatePuddles(dt);
+
+    if(gameOver){
+      updateUI();
+      return;
+    }
+
+    // Note: even if the player reached meta or died, the round keeps running until time hits 0.
+
+    if(phase === 'COUNTDOWN'){
+      countdown -= dt;
+      if(countdown <= 0) startSing();
+      updateUI();
+      return;
+    }
+
+    timeLeft -= dt;
+    if(timeLeft <= 0){
+      timeLeft = 0;
+      triggerTimeoutExecution();
+      updateUI();
+      return;
+    }
+
+    hashCache = buildHash();
+
+    // player input (disabled once the overlay is up, or once the player reached meta)
+    let ix=0, iy=0;
+    const inputEnabled = !!(player && player.alive && overlayMode === 'none' && !playerReachedMeta);
+    if(inputEnabled){
+      if(keys.left) ix -= 1;
+      if(keys.right) ix += 1;
+      if(keys.up) iy -= 1;
+      if(keys.down) iy += 1;
+    }
+
+    const holding = (ix!==0 || iy!==0);
+    const inDir = norm(ix,iy);
+
+    // Sprint state: when you release Shift, keep a short "coast" so the player still slides.
+    const sprintPressed = keys.shift;
+    if(sprintPressed) player.sprintCoast = 1.0;
+    else player.sprintCoast = Math.max(0, player.sprintCoast - dt * 2.25); // ~0.45s coast
+    const sprintActive = sprintPressed || (player.sprintCoast > 0 && Math.hypot(player.vx, player.vy) > 0.12);
+
+
+    const sprint = sprintActive;
+    const mb = sprint ? SPRINT_MOMENTUM_BUILD : WALK_MOMENTUM_BUILD;
+    const md = sprint ? SPRINT_MOMENTUM_DECAY : WALK_MOMENTUM_DECAY;
+    const mm = sprint ? SPRINT_MOMENTUM_MAX   : WALK_MOMENTUM_MAX;
+
+    if(holding) player.momentum = clamp(player.momentum + mb*dt, 0, mm);
+    else player.momentum = clamp(player.momentum - md*dt, 0, mm);
+
+    // Move the pink spotlight band slowly (during SING/LOOK).
+    updateSingLineMovement(dt);
+
+    // NPC AI
+    for(let i=0;i<entities.length;i++){
+      const e = entities[i];
+      if(!e.alive || e.kind!=='npc') continue;
+      npcUpdateAI(e, i, dt);
+    }
+
+    // phase mechanics
+    if(phase === 'SING'){
+      singAcc += dt;
+      while(singAcc >= singUnitTime){
+        singAcc -= singUnitTime;
+        singUnits = Math.max(0, singUnits - 1);
+        if(singUnits <= 0){
+          startLook();
+          break;
+        }
+      }
+      doll.ang = doll.base;
+    } else if(phase === 'LOOK'){
+      lookT -= dt;
+
+      scanPos += scanDir * scanSpeed * dt;
+      if(scanPos > SCAN_LIMIT){ scanPos = SCAN_LIMIT - (scanPos - SCAN_LIMIT); scanDir *= -1; }
+      if(scanPos < -SCAN_LIMIT){ scanPos = -SCAN_LIMIT - (scanPos + SCAN_LIMIT); scanDir *= -1; }
+
+      doll.ang = doll.base + scanPos * FOV_SWEEP_AMPL;
+
+      detectAcc += dt;
+      if(lookT <= 0){
+        startSing();
+      }
+    }
+
+    // watched flags (only useful outside meta)
+    if(phase==='LOOK'){
+      for(let i=0;i<entities.length;i++){
+        const e = entities[i];
+        if(!e.alive || e.kind!=='npc') continue;
+        if(inMeta(e)){ e.watched = false; continue; }
+        e.watched = visibleInFOV(e.x, e.y, i);
+      }
+      visiblePolyTimer -= dt;
+      if(!visiblePolyCache || visiblePolyTimer <= 0){
+        visiblePolyCache = computeVisiblePoly();
+        visiblePolyTimer = 1/15;
+      }
+    } else {
+      for(const e of entities){ if(e.kind==='npc') e.watched = false; }
+      visiblePolyCache = null;
+    }
+
+    // integrate movement
+    for(const e of entities){
+      if(!e.alive) continue;
+
+      const onP = inPuddle(e);
+
+      // Slipping on blood puddles: player slips MUCH harder (big inertia, low control).
+      if(onP){
+        if(e.kind==='player'){
+          // On entering a puddle, boost current velocity so it feels like a fall/slide.
+          if(!e.onPPrev){
+            const sp0 = Math.hypot(e.vx, e.vy);
+            if(sp0 < 0.18){
+              // If almost standing, shove in the current input direction (or forward).
+              const dirMag = Math.hypot(inDir.x, inDir.y);
+              const dx = (dirMag>0.001) ? (inDir.x/dirMag) : 0;
+              const dy = (dirMag>0.001) ? (inDir.y/dirMag) : -1;
+              e.vx += dx * 4.6;
+              e.vy += dy * 4.6;
+            } else {
+              e.vx *= SLIP_ENTER_BOOST;
+              e.vy *= SLIP_ENTER_BOOST;
+            }
+            const sp1 = Math.hypot(e.vx, e.vy);
+            if(sp1 > SLIP_MAX_SPEED){
+              e.vx *= SLIP_MAX_SPEED / sp1;
+              e.vy *= SLIP_MAX_SPEED / sp1;
+            }
+          }
+          e.slip = SLIP_TIME_PLAYER;
+        } else {
+          e.slip = SLIP_TIME;
+        }
+      }
+      if(e.kind==='player') e.onPPrev = onP;
+
+      e.slip = Math.max(0, e.slip - dt);
+      const slipMult = (e.slip>0)
+        ? ((e.kind==='player') ? SLIP_FRICTION_MULT_PLAYER : SLIP_FRICTION_MULT)
+        : 1.0;
+
+      if(e.kind==='npc') e.burstT = Math.max(0, e.burstT - dt);
+      if(e.kind==='npc') e.escapeT = Math.max(0, e.escapeT - dt);
+
+      let maxSp, accel, friction;
+      let ax=0, ay=0;
+
+      if(e.kind==='player'){
+        const sprint = sprintActive;
+        maxSp = sprint ? SPRINT_MAX_SPEED : WALK_MAX_SPEED;
+        accel = (sprint ? SPRINT_ACCEL : WALK_ACCEL) * (e.slip>0 ? SLIP_CONTROL_MULT_PLAYER : 1.0);
+        friction = sprint ? SPRINT_FRICTION : WALK_FRICTION;
+        ax = inDir.x; ay = inDir.y;
+      } else {
+        maxSp = NPC_BASE_MAX_SPEED * e.speedMul * (e.burstT>0 ? 1.40 : 1.0);
+        accel = NPC_BASE_ACCEL * e.accelMul * (e.burstT>0 ? 1.65 : 1.0) * (e.slip>0 ? 0.35 : 1.0);
+
+        // Heavier / larger NPCs: slower + more sluggish
+        const size = (e.sizeMul ?? 1);
+        maxSp /= Math.pow(size, 0.72);
+        accel /= Math.pow(size, 0.55);
+
+        const inFinish = inMeta(e);
+        friction = inFinish ? (NPC_FRICTION_SING * 1.45) : ((phase==='LOOK') ? NPC_FRICTION_LOOK : NPC_FRICTION_SING);
+
+        if(!inFinish && phase==='LOOK' && e.watched){
+          ax = 0; ay = 0;
+          const extraBrake =
+            (e.clumsy === 1) ? 40.0 :
+            (e.clumsy === 2) ? 70.0 :
+            20.0;
+          friction += extraBrake;
+        } else {
+          ax = e.ax; ay = e.ay;
+        }
+      }
+
+      if(ax!==0 || ay!==0){
+        e.vx += ax * accel * dt;
+        e.vy += ay * accel * dt;
+      }
+
+      const sp = Math.hypot(e.vx,e.vy);
+      if(sp > maxSp){
+        const f = maxSp / sp;
+        e.vx *= f; e.vy *= f;
+      }
+
+      const wantsMove = (e.kind==='player') ? holding : (ax!==0 || ay!==0);
+      if(!wantsMove){
+        const momFactor = (e.kind==='player' && (keys.shift || player.sprintCoast > 0)) ? (1 + e.momentum*2.60) : 1;
+        const fr = (friction / momFactor) * slipMult;
+        const damp = Math.exp(-fr * dt);
+        e.vx *= damp; e.vy *= damp;
+        if(Math.hypot(e.vx,e.vy) < 0.03){ e.vx=0; e.vy=0; }
+      } else {
+        const fr = (friction * 0.20) * slipMult;
+        const damp = Math.exp(-fr * dt);
+        e.vx *= damp; e.vy *= damp;
+      }
+
+      moveWithTiles(e, e.x + e.vx*dt, e.y + e.vy*dt);
+
+      // Clamp NPCs inside finish band so they keep wandering there and don't re-enter the arena.
+      if(e.kind==='npc' && inMeta(e)){
+        e.x = clamp(e.x, 0.9, W-0.9);
+        e.y = clamp(e.y, 0.65, FINISH_Y - 0.45);
+        // damp velocity a bit to keep it calm in the finish area
+        e.vx *= 0.92; e.vy *= 0.92;
+      }
+
+      // Anchor player inside finish band once they've reached it.
+      if(e.kind==='player' && playerReachedMeta){
+        e.x = clamp(e.x, 0.9, W-0.9);
+        e.y = clamp(e.y, 0.65, FINISH_Y - 0.45);
+        e.vx = 0; e.vy = 0;
+        e.momentum = 0;
+      }
+
+      // Remember last non-wall position so collision pushes can't embed entities into obstacles.
+      e.safeX = e.x; e.safeY = e.y;
+
+      // Stuck tracking for NPCs: if they barely move while trying, they will force a detour next AI tick.
+      if(e.kind==='npc'){
+        const moved = Math.hypot(e.x - e.prevX, e.y - e.prevY);
+        e.prevX = e.x; e.prevY = e.y;
+
+        const trying = (phase==='SING') && !inMeta(e) && (Math.abs(e.ax) + Math.abs(e.ay) > 0.2);
+        if(trying && moved < 0.010){
+          e.stuck = Math.min(2.0, e.stuck + dt*1.55);
+        } else {
+          e.stuck = Math.max(0, e.stuck - dt*1.10);
+        }
+      }
+    }
+
+    resolveEntityOverlaps();
+
+    // When YOU enter the goal zone, show the overlay but keep the round running.
+    if(player && player.alive && inMeta(player)){
+      onPlayerEnterMeta();
+      clampPlayerInMeta();
+    }
+
+    // Pink spotlight line is checked during LOOK in the same detection tick.
+    singLineAcc = 0;
+
+
+    // detection during LOOK — only outside meta zone
+    if(phase === 'LOOK' && detectAcc >= DETECT_DT){
+      const ticks = Math.floor(detectAcc / DETECT_DT);
+      detectAcc -= ticks * DETECT_DT;
+
+      // Player: lit band + seen => shot (even if not moving). Otherwise: moving in FOV => lose
+      if(player.alive && !inMeta(player)){
+        if(singLines.length && singLineHitsEntity(player) && visibleInFOV(player.x, player.y, -1)){
+          spawnShotTo(player.x, player.y, 2.80, 0);
+          player.alive = false;
+          player.vx = 0; player.vy = 0;
+          playerLost = true;
+
+          promptDeathOverlay();
+          playerDeathPuddleMade = true;
+        }
+
+        if(player.alive){
+          const pSp = Math.hypot(player.vx, player.vy);
+          if(pSp >= PLAYER_DETECT_SPEED && visibleInFOV(player.x, player.y, -1)){
+            addPuddle(player.x, player.y, 2.80);
+            playerDeathPuddleMade = true;
+            player.alive = false;
+            player.vx = 0; player.vy = 0;
+            playerLost = true;
+
+            promptDeathOverlay();
+            // Do NOT end the run: NPCs keep going until the global timer reaches 0.
+          }
+        }
+      }
+
+      // NPCs: lit band + seen => shot (even if still), else visible movement => shot
+      for(let i=0;i<entities.length;i++){
+        const e = entities[i];
+        if(!e.alive || e.kind!=='npc') continue;
+        if(inMeta(e)) continue;
+
+        if(singLines.length && singLineHitsEntity(e) && visibleInFOV(e.x, e.y, i)){
+          killNpcWithShot(e, randomNpcPuddleRadius(e));
+          continue;
+        }
+
+        const sp = Math.hypot(e.vx,e.vy);
+        if(sp < NPC_DETECT_SPEED) continue;
+        if(visibleInFOV(e.x, e.y, i)){
+          // Puddle size: high variety (tiny .. huge)
+          let r;
+          const u = Math.random();
+          if(u < 0.35) r = rnd(0.18, 0.42);           // tiny
+          else if(u < 0.82) r = rnd(0.42, 1.05);      // normal
+          else r = rnd(1.05, 2.05);                   // huge (rare)
+          // clumsiness biases slightly, but size is mostly independent
+          if(e.clumsy === 3) r *= 1.12;
+          if(e.clumsy === 2) r *= 1.04;
+          if(e.clumsy === 1) r *= 0.96;
+          r = clamp(r, 0.14, 2.30);
+          killNpcWithShot(e, r);
+        }
+      }
+    }
+
+
+    updateUI();
+  }
+
+  function end(isWin){
+    gameOver = true;
+    win = isWin;
+
+    if(!isWin){
+      if(!playerDeathPuddleMade && player){
+        addPuddle(player.x, player.y, 2.80);
+        playerDeathPuddleMade = true;
+      }
+      if(player) player.alive = false;
+    }
+
+    uiPhase.textContent = isWin ? '¡Meta! ✅' : 'Perdiste ❌';
+  }
+
+  // ===== UI =====
+  function updateUI(){
+    if(uiLevel) uiLevel.textContent = String(level);
+
+    // HUD phase label (match continues even when overlays are visible)
+    if(phase === 'COUNTDOWN'){
+      uiPhase.textContent = `Empieza en ${Math.max(0,Math.ceil(countdown))}`;
+    } else if(phase === 'SING'){
+      uiPhase.textContent = `CANTANDO ${singUnits}`;
+    } else if(phase === 'LOOK'){
+      uiPhase.textContent = 'MIRANDO';
+    } else if(phase === 'TIMEOUT'){
+      uiPhase.textContent = 'TIEMPO 0';
+    }
+
+    uiTimeBar.style.width = `${Math.round(clamp(timeLeft/levelMaxTime,0,1)*100)}%`;
+    uiTimeTxt.textContent = `${Math.ceil(timeLeft)}s`;
+
+    // Salvados: anyone alive inside the finish band (including the player)
+    let saved = 0;
+    let alive = 0;
+    for(const e of entities){
+      if(e.alive){
+        alive++;
+        if(inMeta(e)) saved++;
+      }
+    }
+    if(uiSaved) uiSaved.textContent = saved;
+    const remaining = Math.max(0, alive - saved);
+    if(uiAlive) uiAlive.textContent = remaining;
+
+    // Sprint pill: active while holding Shift
+    if(uiSprint){
+      const active = !!(player && player.alive && keys.shift);
+      uiSprint.classList.toggle('active', active);
+    }
+  }
+
+  // ===== Rendering =====
+  // Shooter-style Backdrop (procedural, no images)
+  const backdrop = (() => {
+    const W = canvas.width, H = canvas.height;
+
+    // Small grain texture
+    const noise = document.createElement('canvas');
+    noise.width = 128; noise.height = 128;
+    const nctx = noise.getContext('2d', {alpha:true});
+    const img = nctx.createImageData(noise.width, noise.height);
+    for(let i=0;i<img.data.length;i+=4){
+      const v = 140 + Math.floor(Math.random()*90);
+      img.data[i] = v; img.data[i+1] = v; img.data[i+2] = v;
+      img.data[i+3] = Math.floor(Math.random()*55);
+    }
+    nctx.putImageData(img,0,0);
+
+    // Micro-grid pattern
+    const micro = document.createElement('canvas');
+    micro.width = 48; micro.height = 48;
+    const mctx = micro.getContext('2d', {alpha:true});
+    mctx.clearRect(0,0,48,48);
+    mctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    mctx.lineWidth = 1;
+    mctx.beginPath();
+    mctx.moveTo(0,0.5); mctx.lineTo(48,0.5);
+    mctx.moveTo(0,24.5); mctx.lineTo(48,24.5);
+    mctx.moveTo(0.5,0); mctx.lineTo(0.5,48);
+    mctx.moveTo(24.5,0); mctx.lineTo(24.5,48);
+    mctx.stroke();
+    const microPat = mctx.createPattern(micro, 'repeat');
+
+    // Static backdrop (expensive bits drawn once)
+    const staticC = document.createElement('canvas');
+    staticC.width = W; staticC.height = H;
+    const sctx = staticC.getContext('2d', {alpha:true});
+
+    // Base (cool, clean — no right-side gradient / split)
+    const base = sctx.createLinearGradient(0,0,0,H);
+    base.addColorStop(0, '#f9fbff');
+    base.addColorStop(1, '#e6eff8');
+    sctx.fillStyle = base;
+    sctx.fillRect(0,0,W,H);
+
+    // Soft cool wash from top-left
+    const cool = sctx.createRadialGradient(W*0.18, H*0.10, 60, W*0.18, H*0.10, H*1.15);
+    cool.addColorStop(0, 'rgba(120, 165, 210, 0.18)');
+    cool.addColorStop(1, 'rgba(120, 165, 210, 0.00)');
+    sctx.fillStyle = cool;
+    sctx.fillRect(0,0,W,H);
+
+    // Diagonal streaks (volumetric rays) — across the whole screen
+    sctx.globalCompositeOperation = 'screen';
+    for(let i=0;i<10;i++){
+      const baseX = W*(0.12 + i*0.085);
+      const w = W*(0.045 + Math.random()*0.055);
+      const a = 0.04 + Math.random()*0.07;
+      const grad = sctx.createLinearGradient(baseX,0, baseX+w,0);
+      grad.addColorStop(0,'rgba(255,255,255,0)');
+      grad.addColorStop(0.35,`rgba(255,255,255,${a})`);
+      grad.addColorStop(1,'rgba(255,255,255,0)');
+      sctx.fillStyle = grad;
+
+      sctx.save();
+      sctx.translate(baseX, H*0.05);
+      sctx.rotate(-0.11);
+      sctx.fillRect(-w*0.2, -H*0.2, w, H*1.7);
+      sctx.restore();
+    }
+    sctx.globalCompositeOperation = 'source-over';
+
+    // Micro-grid overlay
+    sctx.globalAlpha = 0.18;
+    sctx.fillStyle = microPat;
+    sctx.fillRect(0,0,W,H);
+    sctx.globalAlpha = 1;
+
+    // Pixel fragments near bottom (little blocks)
+    const pxCount = 260;
+    for(let i=0;i<pxCount;i++){
+      const y = H*(0.62 + Math.random()*0.34);
+      const x = W*(0.06 + Math.random()*0.88);
+      const s = 2 + Math.floor(Math.random()*5);
+      const a = 0.05 + Math.random()*0.16;
+      const light = (Math.random() < 0.45);
+      sctx.fillStyle = light ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a*0.60})`;
+      sctx.fillRect(x, y, s, s);
+    }
+
+    // Soft vignette
+    const vig = sctx.createRadialGradient(W*0.5, H*0.55, H*0.12, W*0.5, H*0.55, H*0.95);
+    vig.addColorStop(0,'rgba(0,0,0,0)');
+    vig.addColorStop(1,'rgba(0,0,0,0.22)');
+    sctx.fillStyle = vig;
+    sctx.fillRect(0,0,W,H);
+
+    // Bottom haze + bokeh "bubbles" (static base)
+    const haze = sctx.createLinearGradient(0, H*0.55, 0, H);
+    haze.addColorStop(0,'rgba(255,255,255,0)');
+    haze.addColorStop(1,'rgba(255,255,255,0.18)');
+    sctx.fillStyle = haze;
+    sctx.fillRect(0,0,W,H);
+
+    const bokehBase = [];
+    for(let i=0;i<18;i++){
+      const y = H*(0.70 + Math.random()*0.28);
+      const x = W*(0.06 + Math.random()*0.88);
+      const r = 7 + Math.random()*26;
+      const a = 0.10 + Math.random()*0.10;
+      bokehBase.push({x,y,r,a});
+    }
+
+    // Dynamic floating bokeh (moves subtly)
+    const bokeh = bokehBase.map((p)=>({
+      x:p.x, y:p.y, r:p.r, a:p.a,
+      vx: (-0.18 + Math.random()*0.36),
+      vy: (-0.20 - Math.random()*0.26),
+      t: Math.random()*10,
+    }));
+
+    // Kept for compatibility (no longer used for a split)
+    function xSplit(y){
+      return W * 0.70;
+    }
+
+    function draw(ctx, t){
+      ctx.drawImage(staticC, 0, 0);
+
+      // Dynamic bokeh
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      for(const p of bokeh){
+        p.t += 0.016;
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // wrap softly
+        if(p.y < H*0.60){ p.y = H*(0.72 + Math.random()*0.28); p.x = W*(0.06 + Math.random()*0.88); }
+        if(p.x < -50) p.x = W + 50;
+        if(p.x > W + 50) p.x = -50;
+
+        const pulse = 0.6 + 0.4*Math.sin((t*0.7) + p.t);
+        const rr = p.r * (0.92 + 0.10*pulse);
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+        g.addColorStop(0, `rgba(255, 95, 95, ${p.a*0.95*pulse})`);
+        g.addColorStop(1, 'rgba(255, 95, 95, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rr, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // Grain
+      ctx.save();
+      ctx.globalAlpha = 0.08;
+      ctx.globalCompositeOperation = 'overlay';
+      ctx.drawImage(noise, 0, 0, W, H);
+      ctx.restore();
+    }
+
+    return { draw, xSplit };
+  })();
+
+
+  // World grid (tile readable but subtle, like a AAA tactical overlay)
+  function drawWorldGrid(){
+    ctx.save();
+
+    // Minor lines (every tile)
+    ctx.globalAlpha = 0.10;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    for(let x=0; x<=W; x++){
+      const px = x*tile;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, canvas.height);
+      ctx.stroke();
+    }
+    for(let y=0; y<=H; y++){
+      const py = y*tile;
+      ctx.beginPath();
+      ctx.moveTo(0, py);
+      ctx.lineTo(canvas.width, py);
+      ctx.stroke();
+    }
+
+    // Major lines (every 2 tiles)
+    ctx.globalAlpha = 0.16;
+    ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+    for(let x=0; x<=W; x+=2){
+      const px = x*tile;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, canvas.height);
+      ctx.stroke();
+    }
+    for(let y=0; y<=H; y+=2){
+      const py = y*tile;
+      ctx.beginPath();
+      ctx.moveTo(0, py);
+      ctx.lineTo(canvas.width, py);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  // Small "glass" tile for obstacles
+  let obstacleSprite = null;
+  function rrPath(g, x,y,w,h,r){
+    const rr = Math.min(r, w/2, h/2);
+    g.beginPath();
+    g.moveTo(x+rr,y);
+    g.arcTo(x+w,y, x+w,y+h, rr);
+    g.arcTo(x+w,y+h, x,y+h, rr);
+    g.arcTo(x,y+h, x,y, rr);
+    g.arcTo(x,y, x+w,y, rr);
+    g.closePath();
+  }
+  function ensureObstacleSprite(){
+    if(obstacleSprite) return;
+    const s = Math.max(10, Math.floor(tile*0.90));
+    const c = document.createElement('canvas');
+    c.width = s; c.height = s;
+    const g = c.getContext('2d', {alpha:true});
+
+    // Drop shadow baked
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,0.22)';
+    g.shadowBlur = 8;
+    g.shadowOffsetY = 3;
+
+    rrPath(g, 2,2, s-4, s-4, Math.max(3, Math.floor(s*0.22)));
+    const grad = g.createLinearGradient(0,0,s,s);
+    grad.addColorStop(0,'rgba(255,255,255,0.25)');
+    grad.addColorStop(1,'rgba(15,23,42,0.14)');
+    g.fillStyle = grad;
+    g.fill();
+    g.restore();
+
+    // Outline + inner highlight
+    rrPath(g, 2,2, s-4, s-4, Math.max(3, Math.floor(s*0.22)));
+    g.strokeStyle = 'rgba(0,0,0,0.20)';
+    g.lineWidth = 1.25;
+    g.stroke();
+
+    rrPath(g, 3,3, s-6, s-6, Math.max(2, Math.floor(s*0.18)));
+    g.strokeStyle = 'rgba(255,255,255,0.20)';
+    g.lineWidth = 1;
+    g.stroke();
+
+    obstacleSprite = c;
+  }
+
+
+  function draw(){
+    // Backdrop (AAA shooter vibe)
+    backdrop.draw(ctx, tNow);
+
+    // Tactical grid (tiles)
+    drawWorldGrid();
+
+// finish band
+    ctx.fillStyle = 'rgba(52, 198, 189, 0.10)';
+    ctx.fillRect(0, 0, canvas.width, FINISH_Y*tile);
+    ctx.strokeStyle = 'rgba(52, 198, 189, 0.32)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, FINISH_Y*tile);
+    ctx.lineTo(canvas.width, FINISH_Y*tile);
+    ctx.stroke();
+
+    // start band
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.05)';
+    ctx.fillRect(0, START_ZONE_Y*tile, canvas.width, (H-START_ZONE_Y)*tile);
+
+    drawBandLabels();
+    drawSoldiers();
+
+    // obstacles (glass tiles)
+    ensureObstacleSprite();
+    const os = obstacleSprite.width;
+    for(const k of obstacles){
+      const [xs,ys] = k.split(',').map(Number);
+      const x = xs*tile, y = ys*tile;
+      ctx.drawImage(obstacleSprite, x + (tile-os)*0.5, y + (tile-os)*0.5);
+    }
+
+// puddles
+    for(const p of puddles){
+      const a = clamp(0.10 + p.cur*0.10, 0.12, 0.32);
+      ctx.fillStyle = `rgba(220, 38, 38, ${a})`;
+      ctx.strokeStyle = `rgba(220, 38, 38, ${clamp(a+0.10, 0.22, 0.44)})`;
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.arc(p.x*tile, p.y*tile, p.cur*tile, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // FOV only during LOOK
+    if(phase === 'LOOK') drawFOVWithOcclusion();
+
+    // smooth render coords for NPCs
+    for(const e of entities){
+      if(!e.alive) continue;
+      if(e.kind === 'player') continue;
+      e.fx += (e.x - e.fx) * 0.22;
+      e.fy += (e.y - e.fy) * 0.22;
+    }
+
+    // NPCs
+    const npcR = tile*NPC_BASE_R;
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.70)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    for(const e of entities){
+      if(!e.alive || e.kind!=='npc') continue;
+      const xx = (e.fx ?? e.x) * tile;
+      const yy = (e.fy ?? e.y) * tile;
+      const size = (e.sizeMul ?? 1);
+      const rr = npcR * size;
+      const fatF = clamp((size - 1) / (NPC_MAX_SIZE_MUL - 1), 0, 1);
+      const rx = rr * (1 + 0.18*fatF);
+      const ry = rr * (1 - 0.10*fatF);
+
+      ctx.beginPath();
+      ctx.ellipse(xx, yy, rx, ry, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+
+      // small green dot if in meta (progress indicator)
+      if(inMeta(e)){
+        ctx.fillStyle = 'rgba(52, 198, 189, 0.70)';
+        ctx.beginPath();
+        ctx.arc(xx, yy, Math.min(rx,ry)*0.55, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.70)';
+      }
+    }
+
+    drawShots();
+    drawPlayer();
+    drawDoll();
+    drawSingLine();
+    drawOverlayText();
+
+    updateChromatic();
+    requestAnimationFrame(draw);
+  }
+
+  function drawBandLabels(){
+    ctx.save();
+    ctx.textBaseline = 'middle';
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(0,0,0,0.70)';
+    ctx.font = '800 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillText('META', 14, (FINISH_Y*tile)/2);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.font = '800 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillText('START', canvas.width-14, (START_ZONE_Y*tile + canvas.height)/2);
+
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth = 2;
+    for(let x=90; x<canvas.width; x+=150){
+      ctx.beginPath();
+      ctx.moveTo(x, FINISH_Y*tile-10);
+      ctx.lineTo(x, 14);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, 14);
+      ctx.lineTo(x-8, 26);
+      ctx.lineTo(x+8, 26);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawSoldiers(){
+    const r = tile*0.16;
+    ctx.save();
+    for(const s of soldiers){
+      const x = s.x*tile, y = s.y*tile;
+      ctx.beginPath();
+      ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.88)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x + r*0.45, y);
+      ctx.lineTo(x + r*1.25, y);
+      ctx.stroke();
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = '900 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+ctx.restore();
+  }
+
+  function drawShots(){
+    ctx.save();
+    let drawn = 0;
+    for(let i=shots.length-1; i>=0; i--){
+      const sh = shots[i];
+      if(sh.t < 0) continue;
+      if(sh.t > sh.dur) continue;
+
+      drawn++;
+      if(drawn > SHOT_MAX_ACTIVE_DRAW) break;
+
+      const k = clamp(sh.t / sh.dur, 0, 1);
+      const a = (1-k) * 0.95;
+
+      // black "light streak"
+      ctx.strokeStyle = `rgba(120, 120, 120, ${a})`;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(sh.sx*tile, sh.sy*tile);
+      ctx.lineTo(sh.tx*tile, sh.ty*tile);
+      ctx.stroke();
+
+      // subtle red impact flash
+      ctx.fillStyle = `rgba(220, 38, 38, ${a*0.35})`;
+      ctx.beginPath();
+      ctx.arc(sh.tx*tile, sh.ty*tile, tile*(0.08 + 0.10*k), 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawFOVWithOcclusion(){
+    const cx = doll.x*tile;
+    const cy = doll.y*tile;
+
+    // full cone faint
+    ctx.save();
+    ctx.translate(cx,cy);
+    ctx.rotate(doll.ang);
+    const r = FOV_RANGE*tile;
+
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.arc(0,0,r, -FOV_HALF_ANGLE, FOV_HALF_ANGLE);
+    ctx.closePath();
+
+    ctx.fillStyle = 'rgba(220, 38, 38, 0.045)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(220, 38, 38, 0.18)';
+    ctx.lineWidth = 2.0;
+    ctx.stroke();
+    ctx.restore();
+
+    const pts = visiblePolyCache;
+    if(!pts || pts.length < 2) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    for(const [xw,yw] of pts){
+      ctx.lineTo(xw*tile, yw*tile);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = 'rgba(220, 38, 38, 0.22)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(220, 38, 38, 0.44)';
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPlayer(){
+    if(!player.alive) return;
+
+    const x = player.x*tile, y = player.y*tile;
+
+    const pulse = 0.5 + 0.5*Math.sin(tNow*6.2);
+    const r = tile*(0.20 + 0.015*pulse);
+
+    const v = norm(player.vx, player.vy);
+    let ang = Math.atan2(v.y, v.x);
+    if (Math.hypot(player.vx,player.vy) < 0.06){
+      let ix=0,iy=0; if(keys.left)ix-=1; if(keys.right)ix+=1; if(keys.up)iy-=1; if(keys.down)iy+=1;
+      if(ix||iy) ang = Math.atan2(iy,ix);
+      else ang = -Math.PI/2;
+    }
+
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(ang);
+
+    // Outer glow
+    ctx.beginPath();
+    ctx.arc(0,0,r*3.2,0,Math.PI*2);
+    ctx.fillStyle = `rgba(0, 229, 255, ${0.12 + 0.05*pulse})`;
+    ctx.fill();
+
+    // Thick black outline ring
+    ctx.beginPath();
+    ctx.arc(0,0,r*1.95,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 4.2;
+    ctx.stroke();
+
+    // White inner ring
+    ctx.beginPath();
+    ctx.arc(0,0,r*1.65,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // Arrow with black border
+    ctx.beginPath();
+    ctx.moveTo(r*1.45, 0);
+    ctx.lineTo(-r*0.95, -r*0.90);
+    ctx.lineTo(-r*0.95,  r*0.90);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.98)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 3.0;
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Label "TÚ"
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = '900 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.80)';
+    ctx.fillText('TÚ', x, y - tile*0.55);
+    ctx.restore();
+  }
+
+  function drawDoll(){
+    const x = doll.x*tile, y = doll.y*tile;
+
+    ctx.save();
+    ctx.translate(x,y);
+
+    ctx.beginPath();
+    ctx.arc(0,0,tile*0.34,0,Math.PI*2);
+    ctx.fillStyle = 'rgba(236, 72, 153, 0.35)';
+    ctx.fill();
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = 'rgba(236, 72, 153, 0.70)';
+    ctx.stroke();
+
+    ctx.rotate(doll.ang);
+    ctx.beginPath();
+    ctx.moveTo(tile*0.34, 0);
+    ctx.lineTo(tile*0.10, -tile*0.16);
+    ctx.lineTo(tile*0.10,  tile*0.16);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(236, 72, 153, 0.85)';
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = '900 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillStyle = 'rgba(236, 72, 153, 0.95)';
+    ctx.fillText('MUÑECA', x, y - tile*0.48);
+    ctx.restore();
+  }
+
+  function drawOverlayText(){
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if(phase === 'SING'){
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.font = '900 220px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillText(String(singUnits), canvas.width/2, canvas.height/2 + 20);
+      ctx.globalAlpha = 1;
+    }
+
+    if(phase === 'COUNTDOWN'){
+      const n = Math.max(0, Math.ceil(countdown));
+      const txt = (n<=0) ? '¡YA!' : String(n);
+      ctx.font = '900 78px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(0,0,0,0.88)';
+      ctx.fillText(txt, canvas.width/2, canvas.height/2 - 10);
+      ctx.font = '700 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillText('Prepárate…', canvas.width/2, canvas.height/2 + 52);
+    }
+
+    // Overlay messaging: does NOT pause the simulation. We render a subtle dark layer + text,
+    // and keep the match running underneath until time reaches 0.
+    const showDeath = (overlayMode === 'death');
+    const showMeta  = (overlayMode === 'meta');
+    const showVic   = (overlayMode === 'victory');
+
+    // Fallbacks (in case an older path sets gameOver/playerLost without overlayMode)
+    const showWinFallback  = (!showDeath && !showMeta && !showVic) && gameOver && win;
+    const showLoseFallback = (!showDeath && !showMeta && !showVic) && (playerLost || (gameOver && !win));
+
+    if(showDeath || showMeta || showVic || showLoseFallback || showWinFallback){
+      // Dark translucent layer
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.42)';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      const vg = ctx.createRadialGradient(
+        canvas.width/2, canvas.height/2, canvas.height*0.10,
+        canvas.width/2, canvas.height/2, canvas.height*0.85
+      );
+      vg.addColorStop(0, 'rgba(0,0,0,0.00)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.38)');
+      ctx.fillStyle = vg;
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.restore();
+    }
+
+    if(showDeath || showLoseFallback){
+      ctx.font = '900 56px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.fillText('Has muerto', canvas.width/2, canvas.height/2 - 10);
+
+      ctx.font = '700 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.70)';
+      ctx.fillText('R repetir nivel · I reiniciar (Nivel 1)', canvas.width/2, canvas.height/2 + 46);
+    } else if(showMeta){
+      ctx.font = '900 56px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.fillText('Has llegado a la meta', canvas.width/2, canvas.height/2 - 10);
+
+      ctx.font = '700 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.70)';
+      ctx.fillText('R repetir nivel · I reiniciar (Nivel 1) · S siguiente nivel', canvas.width/2, canvas.height/2 + 46);
+    } else if(showVic || showWinFallback){
+      ctx.font = '900 56px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.fillText('¡Has ganado!', canvas.width/2, canvas.height/2 - 10);
+
+      ctx.font = '700 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.70)';
+      ctx.fillText('I reiniciar (Nivel 1) · R repetir nivel', canvas.width/2, canvas.height/2 + 46);
+    }
+
+
+    ctx.restore();
+  }
+
+  // ===== Loop =====
+  let acc = 0;
+  let last = performance.now();
+
+  function frame(now){
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    acc += dt;
+
+    while(acc >= FIXED_DT){
+      step(FIXED_DT);
+      acc -= FIXED_DT;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  fitToViewport();
+  reset();
+  requestAnimationFrame(frame);
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
