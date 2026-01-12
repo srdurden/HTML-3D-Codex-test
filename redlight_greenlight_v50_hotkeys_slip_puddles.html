@@ -386,6 +386,7 @@
   const PUDDLE_GROW_TIME = 1.35;
 
   // Shooting anim
+  const SHOT_AIM_DUR = 3.0;
   const SHOT_DUR = 0.10;
   const SHOT_MAX_ACTIVE_DRAW = 180;
 
@@ -722,7 +723,7 @@ function goNextLevel(){
   // ===== State =====
   let obstacles = new Set();
   let puddles = [];   // {x,y,r0,r1,t,cur}
-  let shots = [];     // {sx,sy, tx,ty, t, dur, puddleR}
+  let shots = [];     // {sx,sy, tx,ty, t, dur, aimDur, puddleR, killIndex}
   let entities = [];
   let player = null;
 let soldiers = [];
@@ -1156,13 +1157,29 @@ const accelMul = rnd(0.88, 1.10);
   }
   function spawnShotTo(targetX, targetY, puddleR, delay=0, killIndex=null){
     const s = nearestSoldierTo(targetX, targetY);
-    shots.push({sx:s.x, sy:s.y, tx:targetX, ty:targetY, t:-delay, dur:SHOT_DUR, puddleR, killIndex});
+    shots.push({
+      sx:s.x,
+      sy:s.y,
+      tx:targetX,
+      ty:targetY,
+      t:-delay,
+      dur:SHOT_DUR,
+      aimDur: SHOT_AIM_DUR,
+      puddleR,
+      killIndex
+    });
+  }
+  function markEntityForShot(e){
+    e.markedForShot = true;
+    e.vx = 0; e.vy = 0;
+    e.ax = 0; e.ay = 0;
   }
   function killNpcWithShot(e, puddleR){
     // Safety: never kill anyone already inside the goal zone (meta)
     if(inMeta(e)) return;
-    spawnShotTo(e.x, e.y, puddleR, 0);
-    e.alive = false;
+    if(e.markedForShot) return;
+    markEntityForShot(e);
+    spawnShotTo(e.x, e.y, puddleR, 0, entities.indexOf(e));
   }
 
 
@@ -1185,13 +1202,11 @@ const accelMul = rnd(0.88, 1.10);
     // Player: lit + seen => shot (even if still)
     if(player && player.alive && !inMeta(player)){
       if(singLineHitsEntity(player) && visibleInFOV(player.x, player.y, -1)){
-        spawnShotTo(player.x, player.y, 2.80, 0);
-        player.alive = false;
-        player.vx = 0; player.vy = 0;
-        playerLost = true;
-
-        promptDeathOverlay();
-        playerDeathPuddleMade = true;
+        if(!player.markedForShot){
+          markEntityForShot(player);
+          spawnShotTo(player.x, player.y, 2.80, 0, entities.indexOf(player));
+          playerDeathPuddleMade = true;
+        }
       }
     }
 
@@ -1221,8 +1236,7 @@ const accelMul = rnd(0.88, 1.10);
       const delay = idx * 0.010 + rnd(0.00, 0.03); // one-by-one, fast cadence
 
       // Freeze them in place so the execution is readable.
-      e.vx = 0; e.vy = 0;
-      e.ax = 0; e.ay = 0;
+      markEntityForShot(e);
 
       if(e.kind === 'player'){
         spawnShotTo(e.x, e.y, 2.80, delay, i);
@@ -1810,7 +1824,8 @@ function onPlayerEnterMeta(){
     for(let i=shots.length-1;i>=0;i--){
       const sh = shots[i];
       if(sh.t < 0) continue;
-      if(sh.t >= sh.dur){
+      const totalDur = (sh.aimDur ?? 0) + sh.dur;
+      if(sh.t >= totalDur){
         // If this shot is meant to "execute" an entity, keep it visible until impact.
         if(sh.killIndex !== null && sh.killIndex !== undefined){
           const e = entities[sh.killIndex];
@@ -1820,6 +1835,7 @@ function onPlayerEnterMeta(){
               // puddle at the entity position (frozen at timeout)
               addPuddle(e.x, e.y, sh.puddleR);
               e.alive = false;
+              e.markedForShot = false;
               if(e.kind === 'player'){
                 playerLost = true;
 
@@ -1864,7 +1880,7 @@ function onPlayerEnterMeta(){
 
     // player input (disabled once the overlay is up, or once the player reached meta)
     let ix=0, iy=0;
-    const inputEnabled = !!(player && player.alive && overlayMode === 'none' && !playerReachedMeta);
+    const inputEnabled = !!(player && player.alive && !player.markedForShot && overlayMode === 'none' && !playerReachedMeta);
     if(inputEnabled){
       if(keys.left) ix -= 1;
       if(keys.right) ix += 1;
@@ -1896,7 +1912,7 @@ function onPlayerEnterMeta(){
     // NPC AI
     for(let i=0;i<entities.length;i++){
       const e = entities[i];
-      if(!e.alive || e.kind!=='npc') continue;
+      if(!e.alive || e.kind!=='npc' || e.markedForShot) continue;
       npcUpdateAI(e, i, dt);
     }
 
@@ -1948,6 +1964,12 @@ function onPlayerEnterMeta(){
     // integrate movement
     for(const e of entities){
       if(!e.alive) continue;
+      if(e.markedForShot){
+        e.vx = 0; e.vy = 0;
+        e.ax = 0; e.ay = 0;
+        e.safeX = e.x; e.safeY = e.y;
+        continue;
+      }
 
       const onP = inPuddle(e);
 
@@ -2101,25 +2123,19 @@ function onPlayerEnterMeta(){
       // Player: lit band + seen => shot (even if not moving). Otherwise: moving in FOV => lose
       if(player.alive && !inMeta(player)){
         if(singLines.length && singLineHitsEntity(player) && visibleInFOV(player.x, player.y, -1)){
-          spawnShotTo(player.x, player.y, 2.80, 0);
-          player.alive = false;
-          player.vx = 0; player.vy = 0;
-          playerLost = true;
-
-          promptDeathOverlay();
-          playerDeathPuddleMade = true;
+          if(!player.markedForShot){
+            markEntityForShot(player);
+            spawnShotTo(player.x, player.y, 2.80, 0, entities.indexOf(player));
+            playerDeathPuddleMade = true;
+          }
         }
 
-        if(player.alive){
+        if(player.alive && !player.markedForShot){
           const pSp = Math.hypot(player.vx, player.vy);
           if(pSp >= PLAYER_DETECT_SPEED && visibleInFOV(player.x, player.y, -1)){
-            addPuddle(player.x, player.y, 2.80);
+            markEntityForShot(player);
+            spawnShotTo(player.x, player.y, 2.80, 0, entities.indexOf(player));
             playerDeathPuddleMade = true;
-            player.alive = false;
-            player.vx = 0; player.vy = 0;
-            playerLost = true;
-
-            promptDeathOverlay();
             // Do NOT end the run: NPCs keep going until the global timer reaches 0.
           }
         }
@@ -2630,12 +2646,50 @@ ctx.restore();
     for(let i=shots.length-1; i>=0; i--){
       const sh = shots[i];
       if(sh.t < 0) continue;
-      if(sh.t > sh.dur) continue;
+      const aimDur = sh.aimDur ?? 0;
+      const totalDur = aimDur + sh.dur;
+      if(sh.t > totalDur) continue;
 
       drawn++;
       if(drawn > SHOT_MAX_ACTIVE_DRAW) break;
 
-      const k = clamp(sh.t / sh.dur, 0, 1);
+      const target = (sh.killIndex !== null && sh.killIndex !== undefined && entities[sh.killIndex])
+        ? entities[sh.killIndex]
+        : null;
+      const tx = (target?.x ?? sh.tx) * tile;
+      const ty = (target?.y ?? sh.ty) * tile;
+
+      if(sh.t < aimDur){
+        const aimK = clamp(sh.t / aimDur, 0, 1);
+        const spin = sh.t * 2.2;
+        const orbit = tile * (0.28 + 0.08 * Math.sin(aimK * Math.PI));
+        const ox = Math.cos(spin) * orbit;
+        const oy = Math.sin(spin) * orbit;
+
+        ctx.strokeStyle = `rgba(220, 38, 38, ${0.55})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(tx, ty, tile*0.36, 0, Math.PI*2);
+        ctx.stroke();
+
+        ctx.save();
+        ctx.translate(tx + ox, ty + oy);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.65})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, tile*0.10, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-tile*0.16, 0);
+        ctx.lineTo(tile*0.16, 0);
+        ctx.moveTo(0, -tile*0.16);
+        ctx.lineTo(0, tile*0.16);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+
+      const k = clamp((sh.t - aimDur) / sh.dur, 0, 1);
       const a = (1-k) * 0.95;
 
       // black "light streak"
@@ -2643,13 +2697,13 @@ ctx.restore();
       ctx.lineWidth = 1.8;
       ctx.beginPath();
       ctx.moveTo(sh.sx*tile, sh.sy*tile);
-      ctx.lineTo(sh.tx*tile, sh.ty*tile);
+      ctx.lineTo(tx, ty);
       ctx.stroke();
 
       // subtle red impact flash
       ctx.fillStyle = `rgba(220, 38, 38, ${a*0.35})`;
       ctx.beginPath();
-      ctx.arc(sh.tx*tile, sh.ty*tile, tile*(0.08 + 0.10*k), 0, Math.PI*2);
+      ctx.arc(tx, ty, tile*(0.08 + 0.10*k), 0, Math.PI*2);
       ctx.fill();
     }
     ctx.restore();
