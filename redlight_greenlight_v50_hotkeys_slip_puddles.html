@@ -357,6 +357,10 @@
   const NPC_DETECT_SPEED = 0.075;
   const DETECT_HZ = 30;
   const DETECT_DT = 1 / DETECT_HZ;
+  const PLAYER_RETICLE_MAX = 2.30; // world units
+  const PLAYER_RETICLE_MIN = PLAYER_R * 1.02;
+  const PLAYER_RETICLE_SHRINK_BASE = 1.55;
+  const PLAYER_RETICLE_GROW_BASE = 1.15;
 
   // SING countdown duration
   function pickSingTotal(){
@@ -726,6 +730,7 @@ function goNextLevel(){
   let entities = [];
   let player = null;
 let soldiers = [];
+  let playerReticle = {active:false, radius:0};
 
 // ===== Level progression =====
 let level = 1;
@@ -998,6 +1003,8 @@ let singLines = [];
     playerDeathPuddleMade = false;
     timeoutTriggered = false;
     playerLost = false;
+    playerReticle.active = false;
+    playerReticle.radius = 0;
 
     singLines = [];
 
@@ -1334,6 +1341,52 @@ const accelMul = rnd(0.88, 1.10);
     if(d > FOV_HALF_ANGLE) return false;
     if(losBlocked(doll.x, doll.y, x, y, ignoreIndex)) return false;
     return true;
+  }
+
+  function updatePlayerReticle(dt){
+    if(!player || !player.alive || inMeta(player) || phase !== 'LOOK'){
+      playerReticle.active = false;
+      playerReticle.radius = 0;
+      return;
+    }
+
+    const speed = Math.hypot(player.vx, player.vy);
+    const inFov = visibleInFOV(player.x, player.y, -1);
+    const moving = speed >= PLAYER_DETECT_SPEED;
+
+    if(inFov && moving){
+      if(!playerReticle.active){
+        playerReticle.active = true;
+        playerReticle.radius = PLAYER_RETICLE_MAX;
+      }
+
+      const speedNorm = clamp((speed - PLAYER_DETECT_SPEED) / (SPRINT_MAX_SPEED - PLAYER_DETECT_SPEED), 0, 1);
+      const speedFactor = lerp(0.6, 2.2, speedNorm);
+      const dist = Math.hypot(player.x - doll.x, player.y - doll.y);
+      const distNorm = clamp(dist / (FOV_RANGE * 0.65), 0, 1);
+      const distFactor = lerp(1.6, 0.7, distNorm);
+      const shrinkRate = PLAYER_RETICLE_SHRINK_BASE * speedFactor * distFactor;
+
+      playerReticle.radius = Math.max(PLAYER_RETICLE_MIN, playerReticle.radius - shrinkRate * dt);
+
+      if(playerReticle.radius <= PLAYER_RETICLE_MIN + 0.0001){
+        spawnShotTo(player.x, player.y, 2.80, 0);
+        player.alive = false;
+        player.vx = 0; player.vy = 0;
+        playerLost = true;
+        playerReticle.active = false;
+        playerReticle.radius = 0;
+
+        promptDeathOverlay();
+        playerDeathPuddleMade = true;
+      }
+    } else if(playerReticle.active){
+      playerReticle.radius += PLAYER_RETICLE_GROW_BASE * dt;
+      if(playerReticle.radius >= PLAYER_RETICLE_MAX){
+        playerReticle.active = false;
+        playerReticle.radius = 0;
+      }
+    }
   }
 
   function computeVisiblePoly(){
@@ -2083,6 +2136,8 @@ function onPlayerEnterMeta(){
 
     resolveEntityOverlaps();
 
+    updatePlayerReticle(dt);
+
     // When YOU enter the goal zone, show the overlay but keep the round running.
     if(player && player.alive && inMeta(player)){
       onPlayerEnterMeta();
@@ -2110,19 +2165,6 @@ function onPlayerEnterMeta(){
           playerDeathPuddleMade = true;
         }
 
-        if(player.alive){
-          const pSp = Math.hypot(player.vx, player.vy);
-          if(pSp >= PLAYER_DETECT_SPEED && visibleInFOV(player.x, player.y, -1)){
-            addPuddle(player.x, player.y, 2.80);
-            playerDeathPuddleMade = true;
-            player.alive = false;
-            player.vx = 0; player.vy = 0;
-            playerLost = true;
-
-            promptDeathOverlay();
-            // Do NOT end the run: NPCs keep going until the global timer reaches 0.
-          }
-        }
       }
 
       // NPCs: lit band + seen => shot (even if still), else visible movement => shot
@@ -2556,6 +2598,7 @@ function onPlayerEnterMeta(){
     }
 
     drawShots();
+    drawPlayerReticle();
     drawPlayer();
     drawDoll();
     drawSingLine();
@@ -2693,6 +2736,40 @@ ctx.restore();
     ctx.strokeStyle = 'rgba(220, 38, 38, 0.44)';
     ctx.lineWidth = 2.4;
     ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPlayerReticle(){
+    if(!player || !player.alive || !playerReticle.active) return;
+
+    const x = player.x * tile;
+    const y = player.y * tile;
+    const r = playerReticle.radius * tile;
+    const t = clamp((playerReticle.radius - PLAYER_RETICLE_MIN) / (PLAYER_RETICLE_MAX - PLAYER_RETICLE_MIN), 0, 1);
+    const alpha = clamp(0.35 + (1 - t) * 0.55, 0.25, 0.95);
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
+    ctx.lineWidth = Math.max(2, r * 0.07);
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = `rgba(239, 68, 68, ${alpha * 0.7})`;
+    ctx.lineWidth = Math.max(1, r * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.82, 0);
+    ctx.lineTo(-r * 0.58, 0);
+    ctx.moveTo(r * 0.58, 0);
+    ctx.lineTo(r * 0.82, 0);
+    ctx.moveTo(0, -r * 0.82);
+    ctx.lineTo(0, -r * 0.58);
+    ctx.moveTo(0, r * 0.58);
+    ctx.lineTo(0, r * 0.82);
+    ctx.stroke();
+
     ctx.restore();
   }
 
