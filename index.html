@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cruce de Shibuya 3D · FPS Realista</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #02040a; }
+    canvas { display: block; }
+    #overlay {
+      position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
+      background: radial-gradient(circle at 50% 35%, rgba(35, 48, 80, 0.45), rgba(2, 4, 10, 0.95));
+      color: #eef4ff; text-align: center; transition: opacity .3s ease;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    .panel {
+      width: min(760px, 92vw); padding: 28px; border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.24); background: rgba(6, 10, 23, .72);
+      backdrop-filter: blur(6px); box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    }
+    h1 { margin: 0 0 12px; font-size: clamp(1.5rem, 2.8vw, 2.3rem); }
+    p { opacity: .93; line-height: 1.45; }
+    button {
+      border: 0; border-radius: 999px; padding: 11px 20px; font-weight: 700; cursor: pointer;
+      color: #08111d; background: linear-gradient(90deg, #35e7ff, #9ca0ff);
+      box-shadow: 0 8px 30px rgba(61, 186, 255, .35);
+    }
+    #hud {
+      position: fixed; left: 12px; bottom: 12px; z-index: 9; user-select: none;
+      padding: 10px 12px; border-radius: 10px; font-size: .83rem; color: #dfebff;
+      border: 1px solid rgba(255,255,255,.15); background: rgba(5,9,18,.56); backdrop-filter: blur(5px);
+    }
+    #crosshair { position: fixed; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; z-index: 8; opacity: .72; pointer-events: none; }
+    #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #ecf3ff; }
+    #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    #crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="overlay">
+    <div class="panel">
+      <h1>Shibuya Crossing · Simulación 3D FPS</h1>
+      <p>Recorre una versión avanzada del cruce de Shibuya en primera persona: tráfico dinámico, semáforos sincronizados, peatones NPC, cartelería viva y atmósfera nocturna con lluvia.</p>
+      <p><strong>WASD</strong> mover · <strong>Shift</strong> correr · <strong>Espacio</strong> saltar · <strong>Mouse</strong> mirar · <strong>Esc</strong> liberar cursor</p>
+      <button id="startBtn">Entrar en la simulación</button>
+    </div>
+  </div>
+  <div id="crosshair"></div>
+  <div id="hud">Estado: Preparado</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x03050b);
+    scene.fog = new THREE.FogExp2(0x050912, 0.0064);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.02;
+    document.body.appendChild(renderer.domElement);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 1.72, 42);
+
+    const controls = new PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
+
+    const overlay = document.getElementById('overlay');
+    const hud = document.getElementById('hud');
+    document.getElementById('startBtn').addEventListener('click', () => controls.lock());
+    controls.addEventListener('lock', () => overlay.classList.add('hidden'));
+    controls.addEventListener('unlock', () => overlay.classList.remove('hidden'));
+
+    const hemi = new THREE.HemisphereLight(0x5f7fc2, 0x111722, 0.63);
+    scene.add(hemi);
+    const moon = new THREE.DirectionalLight(0xa2c6ff, 1.2);
+    moon.position.set(-110, 145, 95);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(2048, 2048);
+    moon.shadow.camera.left = -180;
+    moon.shadow.camera.right = 180;
+    moon.shadow.camera.top = 180;
+    moon.shadow.camera.bottom = -180;
+    moon.shadow.camera.far = 420;
+    scene.add(moon);
+
+    const neonA = new THREE.PointLight(0x27e0ff, 8, 140, 2);
+    neonA.position.set(-22, 13, -8);
+    scene.add(neonA);
+    const neonB = new THREE.PointLight(0xff3ec8, 8, 120, 2);
+    neonB.position.set(30, 15, 18);
+    scene.add(neonB);
+
+    function canvasTexture(w, h, drawFn) {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      drawFn(g, w, h);
+      const t = new THREE.CanvasTexture(c);
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      return t;
+    }
+
+    const asphaltTex = canvasTexture(1024, 1024, (g, w, h) => {
+      g.fillStyle = '#262a31'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 24000; i++) {
+        const x = Math.random() * w, y = Math.random() * h;
+        const v = 45 + Math.random() * 65;
+        g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, y, 1.4, 1.4);
+      }
+      for (let i = 0; i < 900; i++) {
+        g.strokeStyle = `rgba(150,170,200,${Math.random() * .05})`;
+        g.beginPath(); g.moveTo(Math.random() * w, Math.random() * h); g.lineTo(Math.random() * w, Math.random() * h); g.stroke();
+      }
+    });
+    asphaltTex.wrapS = asphaltTex.wrapT = THREE.RepeatWrapping;
+    asphaltTex.repeat.set(11, 11);
+
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(650, 650), new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: .65, metalness: .22 }));
+    road.rotation.x = -Math.PI / 2;
+    road.receiveShadow = true;
+    scene.add(road);
+
+    // Bordillos y aceras
+    const curbMat = new THREE.MeshStandardMaterial({ color: 0xa5abb5, roughness: 0.82 });
+    const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0x373b45, roughness: 0.92 });
+    function addSidewalk(x, z, w, d) {
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, d), sidewalkMat);
+      slab.position.set(x, 0.25, z);
+      slab.receiveShadow = true;
+      scene.add(slab);
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, 0.7), curbMat);
+      curb.position.set(x, 0.34, z + (d / 2) * Math.sign(-z || 1));
+      curb.receiveShadow = true;
+      scene.add(curb);
+    }
+    addSidewalk(0, -41, 130, 48);
+    addSidewalk(0, 41, 130, 48);
+    addSidewalk(-41, 0, 48, 130);
+    addSidewalk(41, 0, 48, 130);
+
+    const zebraMat = new THREE.MeshStandardMaterial({ color: 0xf6f7fb, roughness: .32, metalness: .12 });
+    function addCrosswalk(x, z, w, l, rot) {
+      const g = new THREE.Group();
+      for (let i = 0; i < 12; i++) {
+        const stripe = new THREE.Mesh(new THREE.PlaneGeometry(w, l / 12 * .62), zebraMat);
+        stripe.rotation.x = -Math.PI / 2;
+        stripe.position.set(0, 0.03, -l / 2 + (i + .5) * (l / 12));
+        g.add(stripe);
+      }
+      g.position.set(x, 0, z);
+      g.rotation.y = rot;
+      scene.add(g);
+    }
+    addCrosswalk(0, 0, 12.5, 34, 0);
+    addCrosswalk(0, 0, 12.5, 34, Math.PI / 2);
+    addCrosswalk(0, 0, 11.5, 34, Math.PI / 4);
+    addCrosswalk(0, 0, 11.5, 34, -Math.PI / 4);
+
+    function buildingTexture(base = '#111a35') {
+      return canvasTexture(512, 1024, (g, w, h) => {
+        g.fillStyle = base; g.fillRect(0, 0, w, h);
+        for (let y = 8; y < h - 20; y += 32) {
+          for (let x = 8; x < w - 20; x += 28) {
+            const lit = Math.random() > 0.35;
+            g.fillStyle = lit ? `rgba(${170 + Math.random() * 85},${160 + Math.random() * 80},${130 + Math.random() * 90},${0.68 + Math.random() * 0.3})` : 'rgba(14,20,32,.82)';
+            g.fillRect(x, y, 16, 20);
+          }
+        }
+      });
+    }
+
+    function billboardTexture(main, sub, color, bg) {
+      return canvasTexture(1024, 512, (g, w, h) => {
+        g.fillStyle = bg; g.fillRect(0, 0, w, h);
+        const grad = g.createLinearGradient(0, 0, w, h);
+        grad.addColorStop(0, 'rgba(255,255,255,.17)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grad; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(255,255,255,.2)'; g.lineWidth = 8; g.strokeRect(10, 10, w - 20, h - 20);
+        g.font = '700 90px Arial'; g.textAlign = 'center';
+        g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 28; g.fillText(main, w / 2, h / 2);
+        g.font = '500 44px Arial'; g.fillStyle = '#f6fbffde'; g.fillText(sub, w / 2, h / 2 + 88);
+      });
+    }
+
+    const animatedSigns = [];
+    function addBuilding(x, z, w, h, d) {
+      const tex = buildingTexture(['#101a35', '#1a1135', '#181b2a'][Math.floor(Math.random() * 3)]);
+      const m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75, metalness: 0.14, emissive: 0x111424, emissiveIntensity: 0.62 });
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+      b.position.set(x, h / 2, z);
+      b.castShadow = true; b.receiveShadow = true;
+      scene.add(b);
+
+      if (Math.random() > 0.25) {
+        const labels = [['TOKYO VISION', '渋谷スクランブル交差点'], ['SHIBUYA LIVE', '東京・渋谷'], ['CITY SCREEN', '夜の東京']][Math.floor(Math.random() * 3)];
+        const tones = [['#66ebff', '#08163d'], ['#ff56da', '#310c3a'], ['#ffe17d', '#3b2208']][Math.floor(Math.random() * 3)];
+        const t = billboardTexture(labels[0], labels[1], tones[0], tones[1]);
+        const mat = new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0x99baff, emissiveIntensity: 0.6, roughness: 0.24, metalness: 0.35, side: THREE.DoubleSide });
+        const s = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.86, h * 0.24), mat);
+        s.position.set(x + (Math.random() > 0.5 ? w / 2 + 0.15 : -w / 2 - 0.15), h * 0.56, z);
+        s.rotation.y = s.position.x > x ? -Math.PI / 2 : Math.PI / 2;
+        animatedSigns.push(s);
+        scene.add(s);
+      }
+    }
+
+    const radiusBase = 123;
+    for (let i = 0; i < 64; i++) {
+      const a = i / 64 * Math.PI * 2;
+      const r = radiusBase + (Math.random() * 20 - 10);
+      addBuilding(Math.cos(a) * r, Math.sin(a) * r, 11 + Math.random() * 18, 28 + Math.random() * 95, 10 + Math.random() * 20);
+    }
+
+    const traffic = { mode: 'cars', timer: 0, cycle: 22 };
+    function makeTrafficLight(x, z, rot, axis) {
+      const g = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 6.5, 10), new THREE.MeshStandardMaterial({ color: 0x20252d, metalness: .72, roughness: .35 }));
+      pole.position.y = 3.2;
+      g.add(pole);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.95, 2.2, 0.6), new THREE.MeshStandardMaterial({ color: 0x12161b, metalness: .7 }));
+      box.position.set(0, 5.4, 0); g.add(box);
+      const colors = [0xff2f38, 0xffd53d, 0x3dff7b], lamps = [];
+      for (let i = 0; i < 3; i++) {
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), new THREE.MeshStandardMaterial({ color: colors[i], emissive: colors[i], emissiveIntensity: i === 0 ? 2.4 : 0.07 }));
+        lamp.position.set(0, 5.98 - i * .62, .31);
+        lamps.push(lamp); g.add(lamp);
+      }
+      g.position.set(x, 0, z); g.rotation.y = rot;
+      scene.add(g);
+      return { axis, lamps };
+    }
+    const trafficLights = [
+      makeTrafficLight(11, -11, Math.PI, 'x'), makeTrafficLight(-11, 11, 0, 'x'),
+      makeTrafficLight(11, 11, -Math.PI / 2, 'z'), makeTrafficLight(-11, -11, Math.PI / 2, 'z')
+    ];
+    function updateLights() {
+      for (const l of trafficLights) {
+        const carGreen = traffic.mode === (l.axis === 'x' ? 'cars' : 'pedestrians');
+        l.lamps[0].material.emissiveIntensity = carGreen ? 0.11 : 2.5;
+        l.lamps[1].material.emissiveIntensity = 0.08;
+        l.lamps[2].material.emissiveIntensity = carGreen ? 2.15 : 0.08;
+      }
+    }
+
+    function createCar(color) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(3.25, 0.98, 1.82), new THREE.MeshStandardMaterial({ color, roughness: .36, metalness: .66 }));
+      body.position.y = .84; body.castShadow = true; g.add(body);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.9, .72, 1.58), new THREE.MeshStandardMaterial({ color: 0x1f2730, roughness: .22, metalness: .85 }));
+      cabin.position.set(.2, 1.43, 0); cabin.castShadow = true; g.add(cabin);
+      for (const x of [-1.1, 1.1]) for (const z of [-.82, .82]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.34, .34, .26, 16), new THREE.MeshStandardMaterial({ color: 0x101114, roughness: .88 }));
+        wheel.rotation.z = Math.PI / 2; wheel.position.set(x, .34, z); g.add(wheel);
+      }
+      const headL = new THREE.PointLight(0xf6f6ff, 1.2, 16, 2); headL.position.set(1.62, .95, .45);
+      const headR = new THREE.PointLight(0xf6f6ff, 1.2, 16, 2); headR.position.set(1.62, .95, -.45);
+      g.add(headL, headR);
+      return g;
+    }
+
+    const laneData = [
+      { axis: 'x', y: .65, z: -4.2, dir: 1 }, { axis: 'x', y: .65, z: 4.2, dir: -1 },
+      { axis: 'z', y: .65, x: -4.2, dir: -1 }, { axis: 'z', y: .65, x: 4.2, dir: 1 }
+    ];
+    const cars = [];
+    const palette = [0x8de9ff, 0xffad61, 0xdfe9ff, 0xff6e97, 0x90ffb1, 0x8fa3ff, 0xffffff];
+    for (let i = 0; i < 22; i++) {
+      const lane = laneData[i % laneData.length];
+      const car = createCar(palette[i % palette.length]);
+      car.userData = { lane, speed: 7 + Math.random() * 8 };
+      const t = -145 + i * 14;
+      if (lane.axis === 'x') { car.position.set(t * lane.dir, lane.y, lane.z); car.rotation.y = lane.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
+      else { car.position.set(lane.x, lane.y, t * lane.dir); car.rotation.y = lane.dir > 0 ? Math.PI : 0; }
+      scene.add(car); cars.push(car);
+    }
+
+    function createPedestrian(c = 0xd0d6e4) {
+      const g = new THREE.Group();
+      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 1.03, 6, 14), new THREE.MeshStandardMaterial({ color: c, roughness: .72 }));
+      torso.position.y = 1.06; torso.castShadow = true; g.add(torso);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.23, 14, 14), new THREE.MeshStandardMaterial({ color: 0xf2c2a0, roughness: .84 }));
+      head.position.y = 1.92; head.castShadow = true; g.add(head);
+      const legL = new THREE.Mesh(new THREE.CylinderGeometry(.09, .09, .76, 10), new THREE.MeshStandardMaterial({ color: 0x1b1f2a, roughness: .8 }));
+      const legR = legL.clone();
+      legL.position.set(-.11, .38, 0); legR.position.set(.11, .38, 0);
+      g.add(legL, legR);
+      g.userData.legs = [legL, legR];
+      return g;
+    }
+    const paths = [
+      { from: new THREE.Vector3(-18, 0, 0), to: new THREE.Vector3(18, 0, 0) }, { from: new THREE.Vector3(18, 0, 0), to: new THREE.Vector3(-18, 0, 0) },
+      { from: new THREE.Vector3(0, 0, -18), to: new THREE.Vector3(0, 0, 18) }, { from: new THREE.Vector3(0, 0, 18), to: new THREE.Vector3(0, 0, -18) },
+      { from: new THREE.Vector3(-16, 0, -16), to: new THREE.Vector3(16, 0, 16) }, { from: new THREE.Vector3(16, 0, -16), to: new THREE.Vector3(-16, 0, 16) }
+    ];
+    const pedestrians = [];
+    for (let i = 0; i < 95; i++) {
+      const p = createPedestrian(new THREE.Color().setHSL(0.52 + Math.random() * .42, .18 + Math.random() * .46, .44 + Math.random() * .24));
+      const path = { ...paths[i % paths.length] };
+      p.userData.path = path;
+      p.userData.progress = Math.random();
+      p.userData.speed = 0.11 + Math.random() * 0.14;
+      p.userData.bob = Math.random() * Math.PI * 2;
+      p.position.copy(path.from.clone().lerp(path.to, p.userData.progress));
+      p.lookAt(path.to.x, 1.2, path.to.z);
+      scene.add(p); pedestrians.push(p);
+    }
+
+    // Lluvia
+    const rainGeo = new THREE.BufferGeometry();
+    const rainCount = 6500;
+    const rainPos = new Float32Array(rainCount * 3);
+    const rainVel = new Float32Array(rainCount);
+    for (let i = 0; i < rainCount; i++) {
+      rainPos[i * 3] = (Math.random() - .5) * 260;
+      rainPos[i * 3 + 1] = 5 + Math.random() * 120;
+      rainPos[i * 3 + 2] = (Math.random() - .5) * 260;
+      rainVel[i] = 25 + Math.random() * 40;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xb8d4ff, size: 0.05, transparent: true, opacity: 0.5 }));
+    scene.add(rain);
+
+    const keys = { w: false, a: false, s: false, d: false, shift: false };
+    const velocity = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    let canJump = false;
+    const eyeHeight = 1.72;
+    const bounds = 94;
+
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyW') keys.w = true;
+      if (e.code === 'KeyA') keys.a = true;
+      if (e.code === 'KeyS') keys.s = true;
+      if (e.code === 'KeyD') keys.d = true;
+      if (e.code === 'ShiftLeft') keys.shift = true;
+      if (e.code === 'Space' && canJump && controls.isLocked) { velocity.y = 6.6; canJump = false; }
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyW') keys.w = false;
+      if (e.code === 'KeyA') keys.a = false;
+      if (e.code === 'KeyS') keys.s = false;
+      if (e.code === 'KeyD') keys.d = false;
+      if (e.code === 'ShiftLeft') keys.shift = false;
+    });
+
+    function updateCars(dt) {
+      const carsGreen = traffic.mode === 'cars';
+      for (const car of cars) {
+        const { lane, speed } = car.userData;
+        const axisPos = lane.axis === 'x' ? car.position.x : car.position.z;
+        const shouldStop = !carsGreen && Math.abs(axisPos) < 20;
+        const step = (shouldStop ? 0 : speed) * lane.dir * dt;
+        if (lane.axis === 'x') {
+          car.position.x += step;
+          if (car.position.x > 165) car.position.x = -165;
+          if (car.position.x < -165) car.position.x = 165;
+        } else {
+          car.position.z += step;
+          if (car.position.z > 165) car.position.z = -165;
+          if (car.position.z < -165) car.position.z = 165;
+        }
+      }
+    }
+
+    function updatePedestrians(dt) {
+      const walking = traffic.mode === 'pedestrians';
+      for (const p of pedestrians) {
+        if (walking) {
+          p.userData.progress += p.userData.speed * dt;
+          if (p.userData.progress > 1) {
+            p.userData.progress = 0;
+            const temp = p.userData.path.from;
+            p.userData.path.from = p.userData.path.to;
+            p.userData.path.to = temp;
+            p.lookAt(p.userData.path.to.x, 1.2, p.userData.path.to.z);
+          }
+          p.position.copy(p.userData.path.from.clone().lerp(p.userData.path.to, p.userData.progress));
+        }
+        p.userData.bob += dt * 9;
+        p.position.y = Math.max(0, Math.sin(p.userData.bob) * 0.02);
+        const [l, r] = p.userData.legs;
+        l.rotation.x = Math.sin(p.userData.bob * 1.4) * 0.48;
+        r.rotation.x = -Math.sin(p.userData.bob * 1.4) * 0.48;
+      }
+    }
+
+    function updateTraffic(dt) {
+      traffic.timer += dt;
+      if (traffic.timer >= traffic.cycle) {
+        traffic.timer = 0;
+        traffic.mode = traffic.mode === 'cars' ? 'pedestrians' : 'cars';
+      }
+      updateLights();
+      hud.textContent = `Estado: ${controls.isLocked ? 'Explorando' : 'Pausado'} · Semáforo: ${traffic.mode === 'cars' ? 'coches en marcha' : 'peatones cruzando'} · Cambio en ${(traffic.cycle - traffic.timer).toFixed(0)}s`;
+    }
+
+    const clock = new THREE.Clock();
+    updateLights();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+
+      updateTraffic(dt);
+      updateCars(dt);
+      updatePedestrians(dt);
+
+      const t = performance.now() * 0.001;
+      neonA.intensity = 7.6 + Math.sin(t * 4.2) * 0.6;
+      neonB.intensity = 7.2 + Math.sin(t * 3.4 + 1.2) * 0.75;
+      animatedSigns.forEach((s, i) => s.material.emissiveIntensity = 0.5 + Math.sin(t * 2.5 + i * .7) * 0.16);
+
+      const rp = rain.geometry.attributes.position.array;
+      for (let i = 0; i < rainCount; i++) {
+        rp[i * 3 + 1] -= rainVel[i] * dt;
+        if (rp[i * 3 + 1] < 0.2) {
+          rp[i * 3 + 1] = 90 + Math.random() * 40;
+          rp[i * 3] = camera.position.x + (Math.random() - .5) * 220;
+          rp[i * 3 + 2] = camera.position.z + (Math.random() - .5) * 220;
+        }
+      }
+      rain.geometry.attributes.position.needsUpdate = true;
+
+      if (controls.isLocked) {
+        velocity.x -= velocity.x * 8 * dt;
+        velocity.z -= velocity.z * 8 * dt;
+        velocity.y -= 18.2 * dt;
+
+        dir.z = Number(keys.w) - Number(keys.s);
+        dir.x = Number(keys.d) - Number(keys.a);
+        dir.normalize();
+
+        const speed = keys.shift ? 17.8 : 10.9;
+        if (keys.w || keys.s) velocity.z -= dir.z * speed * dt * 12;
+        if (keys.a || keys.d) velocity.x -= dir.x * speed * dt * 12;
+
+        controls.moveRight(-velocity.x * dt);
+        controls.moveForward(-velocity.z * dt);
+        controls.getObject().position.y += velocity.y * dt;
+        if (controls.getObject().position.y < eyeHeight) {
+          controls.getObject().position.y = eyeHeight;
+          velocity.y = 0;
+          canJump = true;
+        }
+
+        const p = controls.getObject().position;
+        p.x = THREE.MathUtils.clamp(p.x, -bounds, bounds);
+        p.z = THREE.MathUtils.clamp(p.z, -bounds, bounds);
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
